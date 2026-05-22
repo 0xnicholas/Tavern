@@ -96,7 +96,8 @@ pub struct Workflow {
     pub steps: Vec<Step>,
     pub inputs: Vec<InputDef>,
     pub outputs: Vec<OutputDef>,
-    // planning 字段见第 4 节
+    #[serde(default)]
+    pub planning: Option<PlanningConfig>,
 }
 ```
 
@@ -182,7 +183,38 @@ Manager 的 LLM 决策通过 `TavernHero::execute()` 完成：
    - 汇总所有 CompletedTask → WorkflowResult
 ```
 
-**关键点**：Manager Agent 必须在 `AgentRegistry` 中注册（配置 model/provider）。`ManagerConfig.instructions` 用于覆盖 Manager Agent 默认 instructions，自动注入 CLI 指令（JSON 输出格式、Agent 清单等）。
+**关键点**：Manager Agent 必须在 `AgentRegistry` 中注册（配置 model/provider）。
+
+**Prompt 构建逻辑**（`build_manager_prompt` 内部）：
+
+```
+完整 Prompt = System 部分 + User 部分
+
+System:
+  {manager_config.instructions}   ← 用户定义的 instructions（覆盖默认）
+
+  ## Output Format
+  You MUST respond with valid JSON only. No markdown, no explanation.
+  Schema: {"action": "delegate", "task_id": "<id>", "agent_id": "<id>"}
+          or {"action": "done"}
+
+User:
+  ## Available Agents
+  {agent_name}: {agent_description}
+  ...
+
+  ## Pending Tasks
+  {task_id}: {task_description}
+  ...
+
+  ## Completed Tasks
+  {task_id} → {agent_id}: {output_summary}  (前 500 字符)
+  ...
+
+  Decide the next action. Output JSON only.
+```
+
+`build_manager_prompt` 接收参数 `(workflow, manager_config, completed: &[CompletedTask], pending: &[&Step])`，返回纯文本字符串。
 
 ### 3.5 Engine API
 
@@ -191,33 +223,34 @@ Manager 的 LLM 决策通过 `TavernHero::execute()` 完成：
 
 impl WorkflowEngine {
 
-    // V1 同步执行 (保留，内部自动分发)
+    // V1 同步执行 (保留，内部委托给 start + await_completion)
     pub async fn run(&self, workflow: &Workflow, inputs: Value)
         -> Result<WorkflowResult, CompError>;
 
-    // V2 异步启动 (保留，内部自动分发)
+    // V2 异步启动 (保留，内部根据 process 选择解释器 spawn)
     pub async fn start(&self, workflow: &Workflow, inputs: Value)
         -> Result<ExecutionHandle, CompError>;
 
-    // ── 内部：run 和 start 都调用此方法分发 ──
-    // Sequential: 现有 run_interpreter（V2 事件溯源引擎）
-    // Hierarchical: 新的 run_hierarchical
-    async fn dispatch(&self, workflow: &Workflow, inputs: Value)
-        -> Result<WorkflowResult, CompError> {
-        match &workflow.process {
-            Process::Sequential => self.run_interpreter(...),
-            Process::Hierarchical(cfg) => self.run_hierarchical(cfg, ...),
-        }
-    }
+    // ── 内部解释器（签名一致，由 start() 的 spawn closure 路由） ──
 
-    /// Hierarchical: Manager Agent 驱动的执行循环
-    async fn run_hierarchical(
+    /// Sequential 解释器（现有）
+    async fn run_interpreter(
         &self,
-        workflow: &Workflow,
-        manager_config: &ManagerConfig,
-        execution_id: &str,
+        instance_id: String,
+        workflow: Workflow,
         signal_rx: mpsc::Receiver<WorkflowEvent>,
-    ) -> Result<WorkflowResult, CompError>;
+        completion_tx: tokio::sync::oneshot::Sender<Result<WorkflowResult, CompError>>,
+    ) -> Result<(), CompError>;
+
+    /// Hierarchical 解释器（新增，签名一致）
+    async fn run_interpreter_hierarchical(
+        &self,
+        instance_id: String,
+        workflow: Workflow,
+        manager_config: ManagerConfig,
+        mut signal_rx: mpsc::Receiver<WorkflowEvent>,
+        completion_tx: tokio::sync::oneshot::Sender<Result<WorkflowResult, CompError>>,
+    ) -> Result<(), CompError>;
 
     /// 构建 Manager prompt
     fn build_manager_prompt(
@@ -256,17 +289,31 @@ enum ManagerDecision {
 
 ### 3.6 `start()` 与 Hierarchical 的兼容
 
-`start()` 异步路径同样支持 Hierarchical：
+`start()` 的 spawn closure 根据 `workflow.process` 选择解释器：
 
+```rust
+let interpreter_future = match &workflow.process {
+    Process::Sequential => {
+        engine.run_interpreter(id_clone, workflow, signal_rx, completion_tx)
+    }
+    Process::Hierarchical(cfg) => {
+        engine.run_interpreter_hierarchical(
+            id_clone, workflow, cfg.clone(), signal_rx, completion_tx
+        )
+    }
+};
+let interpreter_handle = tokio::spawn(interpreter_future);
 ```
-start(workflow, inputs)
-  └─ dispatch(workflow, inputs)
-       ├─ Sequential → spawn run_interpreter(instance_id, workflow, signal_rx, completion_tx)
-       └─ Hierarchical → spawn run_hierarchical(manager_config, workflow, signal_rx, completion_tx)
 
-两种模式都产生完整的 Event Log（InstanceCreated → StepScheduled → StepCompleted → ...），
-都返回 ExecutionHandle，支持 signal/cancel/query_state。
+两种解释器的签名一致（都接收 `completion_tx`，返回 `Result<(), CompError>`），
+`start()` 的 `ExecutionHandle` 构造逻辑完全复用。
+
+`run()` 同步方法内部：
+```rust
+let mut handle = self.start(workflow, inputs).await?;
+handle.await_completion().await
 ```
+同样无需修改。
 
 Hierarchical 模式的事件流：
 
@@ -287,14 +334,31 @@ InstanceCreated → InstanceStarted
 
 | 规则 | 值 |
 |---|---|
-| Manager Agent 必须在 registry 注册 | 否则返回 `AgentNotFound` |
+| Manager Agent 必须在 registry 注册 | `validate()` 检查，否则 `AgentNotFound` |
 | `process: hierarchical` 时 `validate_static` 跳过 DAG 校验 | 仍校验 ID 格式、步骤唯一性、task 长度等 |
 | `depends_on` 在 hierarchical 模式下忽略 | Manager 动态决定顺序 |
-| 最大 Task 数量 | `MAX_HIERARCHICAL_TASKS = 50` |
+| 最大 Task 数量（Hierarchical） | `MAX_HIERARCHICAL_TASKS = 50`（覆盖 `MAX_STEPS = 100`，`validate_static` 按 process 分支检查） |
 | Manager 最大循环次数 | `MAX_MANAGER_LOOPS = 100`（防无限） |
 | Manager Prompt 最大长度 | `MAX_MANAGER_PROMPT_LEN = 100_000` |
 
+`validate_static` 中步骤数检查按 process 分支：
+
+```rust
+match &self.process {
+    Process::Sequential => {
+        if self.steps.len() > MAX_STEPS { return Err(...); }
+        validate_dag(&self.steps)?;
+    }
+    Process::Hierarchical(_) => {
+        if self.steps.len() > MAX_HIERARCHICAL_TASKS { return Err(...); }
+        // 不校验 DAG
+    }
+}
+```
+
 ### 3.8 `validate_static()` 变更
+
+`validate_static` 仅做**静态**检查（不依赖 Hero/Registry）。Manager agent 的注册存在性检查移至 `validate()`。
 
 ```rust
 impl Workflow {
@@ -315,8 +379,36 @@ impl Workflow {
                 validate_dag(&self.steps)?;
             }
             Process::Hierarchical(cfg) => {
-                // 跳过 DAG 校验（依赖由 Manager 动态决定）
-                validate_manager_agent(&cfg.agent_id)?;
+                // 跳过 DAG 校验
+                // Manager agent_id 只做 ID 格式检查，注册存在性由 validate() 检查
+                if !is_valid_id(&cfg.agent_id) {
+                    return Err(CompError::ConfigParse { ... });
+                }
+            }
+        }
+
+        Ok(())
+    }
+}
+```
+
+```rust
+// engine.rs: validate() 扩展 Manager agent 检查
+impl WorkflowEngine {
+    pub fn validate(&self, workflow: &Workflow) -> Result<(), CompError> {
+        workflow.validate_static()?;
+
+        // 检查每个 step 的 agent
+        for step in &workflow.steps {
+            if self.hero.get_agent(&step.agent_id).is_none() {
+                return Err(CompError::AgentNotFound { id: step.agent_id.clone() });
+            }
+        }
+
+        // Hierarchical: 额外检查 Manager agent
+        if let Process::Hierarchical(cfg) = &workflow.process {
+            if self.hero.get_agent(&cfg.agent_id).is_none() {
+                return Err(CompError::AgentNotFound { id: cfg.agent_id.clone() });
             }
         }
 
@@ -410,19 +502,32 @@ steps:
 
 ### 4.5 Planning + Hierarchical 交互
 
-Plan 以 **额外 system context** 形式注入 Manager Prompt：
+Plan 以 **额外 User section** 形式注入 Manager Prompt：
 
 ```
 Manager Prompt:
-   System: {manager.instructions}
-           [Plan] {plan.overall_strategy}
-           Per-task instructions: {serialized_plan_steps}
-   Available Agents: ...
-   Pending Tasks: ...
-   Completed Tasks: ...
+  System: (同上)
+  User:
+    ## Execution Plan
+    Strategy: {plan.overall_strategy}
+    Per-step plan:
+    - {task_id}: assigned to {agent_id}, expected: {expected_output}
+
+    ## Available Agents
+    ...
+
+    ## Pending Tasks
+    ...
+
+    ## Completed Tasks
+    ...
+
+    Decide the next action. Output JSON only.
+```
 
 Manager 可偏离 Plan（Plan 是建议，非强制约束）。
-```
+
+**与 worker agent 的区别**：worker agent（被委派的 Step）的 task 描述在 §4.4 步骤 4 中通过字符串拼接直接注入 Plan Context。Manager 的 Plan 信息是通过 `build_manager_prompt` 的 User section 传入，二者机制统一为「将 Plan 信息以结构化文本注入到调用 prompt 中」。
 
 ### 4.6 配置约束
 
@@ -506,24 +611,17 @@ impl WorkflowEngine {
     async fn rebuild_state(&self, instance_id: &str) -> Result<InstanceState, CompError> {
         match self.store.load_latest_checkpoint(instance_id).await? {
             Some(checkpoint) => {
-                // 1. 从快照恢复
                 let mut state = checkpoint.state;
                 state.id = instance_id.to_string();
-
-                // 2. 获取快照之后的所有事件
                 let all_events = self.store.read_stream(instance_id).await?;
-                // event_sequence = N → 事件 [0..N) 已在快照中
-                // 需要重放 [N..)
+                // event_sequence = N → 事件 [0..N) 已在快照中，重放 [N..)
                 let delta_events = &all_events[checkpoint.event_sequence as usize..];
-
-                // 3. 重放增量
                 for event in delta_events {
                     state.apply(event)?;
                 }
                 Ok(state)
             }
             None => {
-                // 无快照，完整重放
                 let events = self.store.read_stream(instance_id).await?;
                 let mut state = InstanceState {
                     id: instance_id.to_string(),
@@ -536,23 +634,53 @@ impl WorkflowEngine {
             }
         }
     }
+}
+```
 
-    async fn maybe_checkpoint(
-        &self,
-        instance_id: &str,
-        state: &InstanceState,
-        event_sequence: u64,
-    ) {
-        let checkpoint = Checkpoint {
-            instance_id: instance_id.to_string(),
-            workflow_id: state.workflow_id.clone(),
-            event_sequence,
-            state: state.clone(),
-            created_at: Utc::now(),
-        };
-        if let Err(e) = self.store.save_checkpoint(checkpoint).await {
-            tracing::warn!(error = %e, "checkpoint save failed, continuing");
+### 5.6 事件序号追踪与 Checkpoint 写入时机
+
+在 `run_interpreter` 和 `run_interpreter_hierarchical` 的事件循环中：
+
+```rust
+// 事件循环开始
+let mut event_sequence: u64 = 0;  // 新增计数器
+
+loop {
+    let action = self.decide_next_action(&workflow, &state)?;
+    match action {
+        Action::ScheduleSteps(step_ids) => {
+            for step_id in step_ids {
+                let event = WorkflowEvent::StepScheduled { ... };
+                self.apply_and_persist(&instance_id, event, &mut state).await?;
+                event_sequence += 1;  // 每次 persist 后递增
+                // ...
+            }
         }
+        Action::WaitForEvent => {
+            tokio::select! {
+                Some(event) = internal_rx.recv() => {
+                    self.apply_and_persist(&instance_id, event.clone(), &mut state).await?;
+                    event_sequence += 1;
+
+                    // StepCompleted 后保存 checkpoint
+                    if let WorkflowEvent::StepCompleted { .. } = &event {
+                        self.maybe_checkpoint(
+                            &instance_id, &state, event_sequence,
+                        ).await;
+                    }
+                    // ...
+                }
+                // ...
+            }
+        }
+        Action::Complete(outputs) => {
+            let event = WorkflowEvent::WorkflowCompleted { ... };
+            self.apply_and_persist(&instance_id, event, &mut state).await?;
+            event_sequence += 1;
+            self.maybe_checkpoint(&instance_id, &state, event_sequence).await;
+            break Ok(WorkflowResult { ... });
+        }
+        // ...
     }
 }
 ```
@@ -569,7 +697,7 @@ impl WorkflowEngine {
 | V2 ExecutionHandle / EventStore | 不变 |
 | 现有 YAML 配置 | 无需修改 |
 | 现有 REST API | 新增可选 `?process=` 参数 |
-| 现有 81 tests | 全部通过 |
+| 现有全部 tests | 全部通过 |
 
 ---
 
@@ -581,16 +709,16 @@ impl WorkflowEngine {
 pub enum CompError {
     // 现有 20 个变体保持不变 ...
 
-    /// Manager Agent 调用失败（LLM 返回非 JSON 或 Runtime 错误）
+    #[error("manager agent error: {reason}")]
     ManagerError { reason: String },
 
-    /// AgentPlanner 调用失败
+    #[error("planning error: {reason}")]
     PlanningError { reason: String },
 
-    /// Checkpoint 读写失败
+    #[error("checkpoint error: {reason}")]
     CheckpointError { reason: String },
 
-    /// Manager 循环超过上限
+    #[error("manager loop exceeded max loops ({max_loops})")]
     ManagerLoopExceeded { max_loops: usize },
 }
 ```
@@ -609,7 +737,7 @@ pub enum CompError {
 ## 8. 验收标准
 
 - [ ] `cargo build --workspace` 通过
-- [ ] `cargo test --workspace` 全部通过，现有 81 tests 零破坏
+- [ ] `cargo test --workspace` 全部通过，现有全部 tests 零破坏
 - [ ] `cargo clippy --workspace` 零新增警告
 - [ ] Hierarchical：content_pipeline 通过 Manager Agent 完成三个 agent 的协调执行
 - [ ] Hierarchical test：Manager 返回 `done` 时正确终止（用 MockRuntime 模拟）
