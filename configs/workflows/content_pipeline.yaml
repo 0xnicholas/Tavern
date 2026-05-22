@@ -1,0 +1,32 @@
+id: content_pipeline
+name: 内容生产流水线
+description: 研究 -> 写作 -> 编辑的协作流程
+
+steps:
+  - id: research
+    agent_id: researcher
+    task: "研究以下主题并整理关键信息: {{topic}}"
+    output_key: research_notes
+    retries: 1
+    retry_delay: 2
+
+  - id: write
+    agent_id: writer
+    task: "根据以下研究资料撰写文章: {{research_notes}}"
+    depends_on: [research]
+    output_key: draft
+    retries: 1
+
+  - id: edit
+    agent_id: editor
+    task: "编辑以下文章，改进语言和结构: {{draft}}"
+    depends_on: [write]
+    output_key: final_article
+
+inputs:
+  - name: topic
+    required: true
+
+outputs:
+  - name: final_article
+    value: "{{final_article}}"

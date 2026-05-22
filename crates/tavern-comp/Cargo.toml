@@ -1,0 +1,25 @@
+[package]
+name = "tavern-comp"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[dependencies]
+tavern-core = { path = "../tavern-core" }
+tavern-hero = { path = "../tavern-hero" }
+serde = { version = "1.0", features = ["derive"] }
+serde_yaml = "0.9"
+serde_json = "1.0"
+thiserror = "1.0"
+tokio = { version = "1", features = ["full"] }
+chrono = { version = "0.4", features = ["serde"] }
+minijinja = "2"
+tracing = "0.1"
+futures-util = "0.3"
+uuid = { version = "1", features = ["v4"] }
+async-trait = "0.1"
+
+[dev-dependencies]
+tempfile = "3"
+tavern-adapters = { path = "../tavern-adapters" }

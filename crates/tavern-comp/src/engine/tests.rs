@@ -1,0 +1,637 @@
+use std::sync::Arc;
+use std::time::Duration;
+
+use serde_json::json;
+use tavern_adapters::MockRuntime;
+use tavern_hero::TavernHero;
+
+use crate::workflow::{InputDef, OutputDef, Step};
+
+use super::*;
+
+fn make_engine<F>(handler: F) -> WorkflowEngine
+where
+    F: Fn(&str, &str, Option<Value>) -> Result<Value, tavern_core::RuntimeError>
+        + Send
+        + Sync
+        + 'static,
+{
+    let runtime = Arc::new(MockRuntime::new(handler));
+    let hero = TavernHero::new(runtime);
+
+    // 注册一个虚拟 agent
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("agent.yaml"),
+        r#"
+id: test_agent
+name: Test Agent
+model:
+  provider: openai
+  name: gpt-4o
+instructions: test
+"#,
+    )
+    .unwrap();
+    hero.load_agent(dir.path().join("agent.yaml").as_path())
+        .unwrap();
+
+    WorkflowEngine::new(Arc::new(hero))
+}
+
+fn simple_workflow() -> Workflow {
+    Workflow {
+        id: "wf1".to_string(),
+        name: "Test Workflow".to_string(),
+        description: None,
+        steps: vec![Step {
+            id: "s1".to_string(),
+            agent_id: "test_agent".to_string(),
+            task: "process {{input}}".to_string(),
+            depends_on: vec![],
+            output_key: Some("result".to_string()),
+            timeout: None,
+            retries: None,
+            retry_delay: None,
+        wait_for_signal: None,
+        signal_timeout: None,
+        }],
+        inputs: vec![InputDef {
+            name: "input".to_string(),
+            required: true,
+            default: None,
+        }],
+        outputs: vec![OutputDef {
+            name: "out".to_string(),
+            value: "{{result}}".to_string(),
+        }],
+    }
+}
+
+#[tokio::test]
+async fn test_run_success() {
+    let engine = make_engine(|_agent_id, _task, _context| Ok(json!("done")));
+    let wf = simple_workflow();
+    let result = engine.run(&wf, json!({"input": "hello"})).await.unwrap();
+
+    assert_eq!(result.context["input"], "hello");
+    assert_eq!(result.context["result"], "done");
+    assert!(result.step_results.contains_key("s1"));
+    assert!(matches!(
+        result.step_results["s1"].status,
+        StepStatus::Completed
+    ));
+}
+
+#[tokio::test]
+async fn test_run_missing_input() {
+    let engine = make_engine(|_agent_id, _task, _context| Ok(json!("done")));
+    let wf = simple_workflow();
+    let err = engine.run(&wf, json!({})).await.unwrap_err();
+    assert!(matches!(err, CompError::MissingInput { name } if name == "input"));
+}
+
+#[tokio::test]
+async fn test_run_agent_not_found() {
+    let engine = make_engine(|_agent_id, _task, _context| Ok(json!("done")));
+    let mut wf = simple_workflow();
+    wf.steps[0].agent_id = "unknown".to_string();
+    let err = engine.run(&wf, json!({"input": "x"})).await.unwrap_err();
+    assert!(matches!(err, CompError::AgentNotFound { id } if id == "unknown"));
+}
+
+#[tokio::test]
+async fn test_run_step_failure() {
+    let engine = make_engine(|_agent_id, _task, _context| {
+        Err(tavern_core::RuntimeError::RequestFailed {
+            status: 500,
+            body: "boom".to_string(),
+        })
+    });
+    let wf = simple_workflow();
+    let err = engine.run(&wf, json!({"input": "x"})).await.unwrap_err();
+    assert!(
+        matches!(err, CompError::StepFailed { step_id, reason } if step_id == "s1" && reason.contains("boom"))
+    );
+}
+
+#[tokio::test]
+async fn test_run_timeout() {
+    use tavern_core::Runtime;
+
+    struct SlowRuntime;
+    #[async_trait::async_trait]
+    impl Runtime for SlowRuntime {
+        async fn execute(
+            &self,
+            _agent_id: &str,
+            _task: &str,
+            _context: Option<Value>,
+        ) -> Result<Value, tavern_core::RuntimeError> {
+            tokio::time::sleep(Duration::from_secs(10)).await;
+            Ok(json!("done"))
+        }
+    }
+
+    let runtime: Arc<dyn Runtime> = Arc::new(SlowRuntime);
+    let hero = TavernHero::new(runtime);
+
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("agent.yaml"),
+        r#"
+id: test_agent
+name: Test Agent
+model:
+  provider: openai
+  name: gpt-4o
+instructions: test
+"#,
+    )
+    .unwrap();
+    hero.load_agent(dir.path().join("agent.yaml").as_path())
+        .unwrap();
+
+    let engine = WorkflowEngine::new(Arc::new(hero));
+    let mut wf = simple_workflow();
+    wf.steps[0].timeout = Some(1); // 1 秒超时
+    let err = engine.run(&wf, json!({"input": "x"})).await.unwrap_err();
+    assert!(
+        matches!(err, CompError::StepFailed { step_id, reason } if step_id == "s1" && reason.contains("timed out"))
+    );
+}
+
+#[tokio::test]
+async fn test_run_outputs_validation() {
+    let engine = make_engine(|_agent_id, _task, _context| Ok(json!("done")));
+    let mut wf = simple_workflow();
+    wf.outputs.push(OutputDef {
+        name: "bad".to_string(),
+        value: "{{nonexistent}}".to_string(),
+    });
+    let err = engine.run(&wf, json!({"input": "x"})).await.unwrap_err();
+    assert!(matches!(err, CompError::MissingContextVariable { .. }));
+}
+
+#[tokio::test]
+async fn test_run_pipeline() {
+    let engine = make_engine(|_agent_id, task, _context| {
+        if task.starts_with("research") {
+            Ok(json!("research notes"))
+        } else if task.starts_with("write") {
+            Ok(json!("draft article"))
+        } else {
+            Ok(json!("final article"))
+        }
+    });
+
+    let wf = Workflow {
+        id: "pipeline".to_string(),
+        name: "Pipeline".to_string(),
+        description: None,
+        steps: vec![
+            Step {
+                id: "research".to_string(),
+                agent_id: "test_agent".to_string(),
+                task: "research {{topic}}".to_string(),
+                depends_on: vec![],
+                output_key: Some("notes".to_string()),
+                timeout: None,
+                retries: None,
+                retry_delay: None,
+            wait_for_signal: None,
+            signal_timeout: None,
+            },
+            Step {
+                id: "write".to_string(),
+                agent_id: "test_agent".to_string(),
+                task: "write based on {{notes}}".to_string(),
+                depends_on: vec!["research".to_string()],
+                output_key: Some("draft".to_string()),
+                timeout: None,
+                retries: None,
+                retry_delay: None,
+            wait_for_signal: None,
+            signal_timeout: None,
+            },
+            Step {
+                id: "edit".to_string(),
+                agent_id: "test_agent".to_string(),
+                task: "edit {{draft}}".to_string(),
+                depends_on: vec!["write".to_string()],
+                output_key: Some("final".to_string()),
+                timeout: None,
+                retries: None,
+                retry_delay: None,
+            wait_for_signal: None,
+            signal_timeout: None,
+            },
+        ],
+        inputs: vec![InputDef {
+            name: "topic".to_string(),
+            required: true,
+            default: None,
+        }],
+        outputs: vec![OutputDef {
+            name: "article".to_string(),
+            value: "{{final}}".to_string(),
+        }],
+    };
+
+    let result = engine.run(&wf, json!({"topic": "AI"})).await.unwrap();
+    assert_eq!(result.context["topic"], "AI");
+    assert_eq!(result.context["notes"], "research notes");
+    assert_eq!(result.context["draft"], "draft article");
+    assert_eq!(result.context["final"], "final article");
+    assert_eq!(result.step_results.len(), 3);
+}
+
+#[tokio::test]
+async fn test_run_retry_success() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    let call_count = AtomicUsize::new(0);
+    let engine = make_engine(move |_agent_id, _task, _context| {
+        let count = call_count.fetch_add(1, Ordering::SeqCst);
+        if count < 2 {
+            Err(tavern_core::RuntimeError::RequestFailed {
+                status: 500,
+                body: format!("attempt {}", count),
+            })
+        } else {
+            Ok(json!("success"))
+        }
+    });
+
+    let mut wf = simple_workflow();
+    wf.steps[0].retries = Some(2);
+    wf.steps[0].retry_delay = Some(0);
+
+    let result = engine.run(&wf, json!({"input": "x"})).await.unwrap();
+    assert_eq!(result.context["result"], "success");
+    assert!(matches!(result.step_results["s1"].status, StepStatus::Completed));
+}
+
+#[tokio::test]
+async fn test_run_retry_exhausted() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    let call_count = AtomicUsize::new(0);
+    let engine = make_engine(move |_agent_id, _task, _context| {
+        call_count.fetch_add(1, Ordering::SeqCst);
+        Err(tavern_core::RuntimeError::RequestFailed {
+            status: 500,
+            body: "always fail".to_string(),
+        })
+    });
+
+    let mut wf = simple_workflow();
+    wf.steps[0].retries = Some(2);
+    wf.steps[0].retry_delay = Some(0);
+
+    let err = engine.run(&wf, json!({"input": "x"})).await.unwrap_err();
+    assert!(matches!(err, CompError::StepFailed { step_id, reason } if step_id == "s1" && reason.contains("always fail")));
+}
+
+#[tokio::test]
+async fn test_run_retry_with_delay() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    let call_count = AtomicUsize::new(0);
+    let engine = make_engine(move |_agent_id, _task, _context| {
+        let count = call_count.fetch_add(1, Ordering::SeqCst);
+        if count == 0 {
+            Err(tavern_core::RuntimeError::RequestFailed {
+                status: 500,
+                body: "fail".to_string(),
+            })
+        } else {
+            Ok(json!("ok"))
+        }
+    });
+
+    let mut wf = simple_workflow();
+    wf.steps[0].retries = Some(1);
+    wf.steps[0].retry_delay = Some(1); // 1 秒延迟
+
+    let start = std::time::Instant::now();
+    let result = engine.run(&wf, json!({"input": "x"})).await.unwrap();
+    let elapsed = start.elapsed();
+
+    assert_eq!(result.context["result"], "ok");
+    assert!(elapsed.as_secs_f64() >= 0.9, "retry delay should be at least 0.9s");
+}
+
+#[tokio::test]
+async fn test_run_parallel_steps() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::time::Instant;
+    use tavern_core::Runtime;
+
+    struct SlowRuntime {
+        delay_ms: u64,
+        call_count: Arc<AtomicUsize>,
+    }
+
+    #[async_trait::async_trait]
+    impl Runtime for SlowRuntime {
+        async fn execute(
+            &self,
+            _agent_id: &str,
+            _task: &str,
+            _context: Option<Value>,
+        ) -> Result<Value, tavern_core::RuntimeError> {
+            self.call_count.fetch_add(1, Ordering::SeqCst);
+            tokio::time::sleep(Duration::from_millis(self.delay_ms)).await;
+            Ok(json!("done"))
+        }
+    }
+
+    let call_count = Arc::new(AtomicUsize::new(0));
+    let runtime: Arc<dyn Runtime> = Arc::new(SlowRuntime {
+        delay_ms: 300,
+        call_count: call_count.clone(),
+    });
+
+    let hero = TavernHero::new(runtime);
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("agent.yaml"),
+        r#"
+id: test_agent
+name: Test Agent
+model:
+  provider: openai
+  name: gpt-4o
+instructions: test
+"#,
+    )
+    .unwrap();
+    hero.load_agent(dir.path().join("agent.yaml").as_path())
+        .unwrap();
+
+    let engine = WorkflowEngine::new(Arc::new(hero));
+
+    let wf = Workflow {
+        id: "parallel".to_string(),
+        name: "Parallel".to_string(),
+        description: None,
+        steps: vec![
+            Step {
+                id: "a".to_string(),
+                agent_id: "test_agent".to_string(),
+                task: "task a".to_string(),
+                depends_on: vec![],
+                output_key: Some("out_a".to_string()),
+                timeout: None,
+                retries: None,
+                retry_delay: None,
+            wait_for_signal: None,
+            signal_timeout: None,
+            },
+            Step {
+                id: "b".to_string(),
+                agent_id: "test_agent".to_string(),
+                task: "task b".to_string(),
+                depends_on: vec![],
+                output_key: Some("out_b".to_string()),
+                timeout: None,
+                retries: None,
+                retry_delay: None,
+            wait_for_signal: None,
+            signal_timeout: None,
+            },
+        ],
+        inputs: vec![],
+        outputs: vec![],
+    };
+
+    let start = Instant::now();
+    let result = engine.run(&wf, json!({})).await.unwrap();
+    let elapsed = start.elapsed();
+
+    assert!(
+        elapsed.as_millis() < 550,
+        "steps should execute in parallel, took {}ms",
+        elapsed.as_millis()
+    );
+    assert_eq!(call_count.load(Ordering::SeqCst), 2);
+    assert_eq!(result.context["out_a"], "done");
+    assert_eq!(result.context["out_b"], "done");
+}
+
+#[tokio::test]
+async fn test_run_max_concurrency() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::time::Instant;
+    use tavern_core::Runtime;
+
+    struct SlowRuntime {
+        delay_ms: u64,
+        call_count: Arc<AtomicUsize>,
+    }
+
+    #[async_trait::async_trait]
+    impl Runtime for SlowRuntime {
+        async fn execute(
+            &self,
+            _agent_id: &str,
+            _task: &str,
+            _context: Option<Value>,
+        ) -> Result<Value, tavern_core::RuntimeError> {
+            self.call_count.fetch_add(1, Ordering::SeqCst);
+            tokio::time::sleep(Duration::from_millis(self.delay_ms)).await;
+            Ok(json!("done"))
+        }
+    }
+
+    let call_count = Arc::new(AtomicUsize::new(0));
+    let runtime: Arc<dyn Runtime> = Arc::new(SlowRuntime {
+        delay_ms: 200,
+        call_count: call_count.clone(),
+    });
+
+    let hero = TavernHero::new(runtime);
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("agent.yaml"),
+        r#"
+id: test_agent
+name: Test Agent
+model:
+  provider: openai
+  name: gpt-4o
+instructions: test
+"#,
+    )
+    .unwrap();
+    hero.load_agent(dir.path().join("agent.yaml").as_path())
+        .unwrap();
+
+    let engine = WorkflowEngine::new(Arc::new(hero)).with_max_concurrency(2);
+
+    let wf = Workflow {
+        id: "limited".to_string(),
+        name: "Limited Concurrency".to_string(),
+        description: None,
+        steps: vec![
+            Step {
+                id: "a".to_string(),
+                agent_id: "test_agent".to_string(),
+                task: "task a".to_string(),
+                depends_on: vec![],
+                output_key: None,
+                timeout: None,
+                retries: None,
+                retry_delay: None,
+            wait_for_signal: None,
+            signal_timeout: None,
+            },
+            Step {
+                id: "b".to_string(),
+                agent_id: "test_agent".to_string(),
+                task: "task b".to_string(),
+                depends_on: vec![],
+                output_key: None,
+                timeout: None,
+                retries: None,
+                retry_delay: None,
+            wait_for_signal: None,
+            signal_timeout: None,
+            },
+            Step {
+                id: "c".to_string(),
+                agent_id: "test_agent".to_string(),
+                task: "task c".to_string(),
+                depends_on: vec![],
+                output_key: None,
+                timeout: None,
+                retries: None,
+                retry_delay: None,
+            wait_for_signal: None,
+            signal_timeout: None,
+            },
+        ],
+        inputs: vec![],
+        outputs: vec![],
+    };
+
+    let start = Instant::now();
+    engine.run(&wf, json!({})).await.unwrap();
+    let elapsed = start.elapsed();
+
+    assert!(
+        elapsed.as_millis() < 550,
+        "with max_concurrency=2, 3x200ms steps should take ~400ms, took {}ms",
+        elapsed.as_millis()
+    );
+    assert!(
+        elapsed.as_millis() >= 300,
+        "should not be faster than ~300ms (indicating all 3 ran in parallel), took {}ms",
+        elapsed.as_millis()
+    );
+    assert_eq!(call_count.load(Ordering::SeqCst), 3);
+}
+
+#[tokio::test]
+async fn test_run_parallel_failure_cancels_others() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::time::Instant;
+    use tavern_core::Runtime;
+
+    struct SelectiveRuntime {
+        completed_count: Arc<AtomicUsize>,
+    }
+
+    #[async_trait::async_trait]
+    impl Runtime for SelectiveRuntime {
+        async fn execute(
+            &self,
+            _agent_id: &str,
+            task: &str,
+            _context: Option<Value>,
+        ) -> Result<Value, tavern_core::RuntimeError> {
+            if task == "fail" {
+                return Err(tavern_core::RuntimeError::RequestFailed {
+                    status: 500,
+                    body: "boom".to_string(),
+                });
+            }
+            tokio::time::sleep(Duration::from_millis(500)).await;
+            self.completed_count.fetch_add(1, Ordering::SeqCst);
+            Ok(json!("done"))
+        }
+    }
+
+    let completed_count = Arc::new(AtomicUsize::new(0));
+    let runtime: Arc<dyn Runtime> = Arc::new(SelectiveRuntime {
+        completed_count: completed_count.clone(),
+    });
+
+    let hero = TavernHero::new(runtime);
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("agent.yaml"),
+        r#"
+id: test_agent
+name: Test Agent
+model:
+  provider: openai
+  name: gpt-4o
+instructions: test
+"#,
+    )
+    .unwrap();
+    hero.load_agent(dir.path().join("agent.yaml").as_path())
+        .unwrap();
+
+    let engine = WorkflowEngine::new(Arc::new(hero));
+
+    let wf = Workflow {
+        id: "fail_fast".to_string(),
+        name: "Fail Fast".to_string(),
+        description: None,
+        steps: vec![
+            Step {
+                id: "slow".to_string(),
+                agent_id: "test_agent".to_string(),
+                task: "slow".to_string(),
+                depends_on: vec![],
+                output_key: None,
+                timeout: None,
+                retries: None,
+                retry_delay: None,
+            wait_for_signal: None,
+            signal_timeout: None,
+            },
+            Step {
+                id: "fast".to_string(),
+                agent_id: "test_agent".to_string(),
+                task: "fail".to_string(),
+                depends_on: vec![],
+                output_key: None,
+                timeout: None,
+                retries: None,
+                retry_delay: None,
+            wait_for_signal: None,
+            signal_timeout: None,
+            },
+        ],
+        inputs: vec![],
+        outputs: vec![],
+    };
+
+    let start = Instant::now();
+    let err = engine.run(&wf, json!({})).await.unwrap_err();
+    let elapsed = start.elapsed();
+
+    assert!(
+        matches!(err, CompError::StepFailed { step_id, reason } if step_id == "fast" && reason.contains("boom"))
+    );
+    assert!(
+        elapsed.as_millis() < 400,
+        "should fail fast when one parallel step fails, took {}ms",
+        elapsed.as_millis()
+    );
+    assert_eq!(completed_count.load(Ordering::SeqCst), 0);
+}

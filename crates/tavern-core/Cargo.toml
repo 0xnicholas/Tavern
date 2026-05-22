@@ -1,0 +1,15 @@
+[package]
+name = "tavern-core"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[dependencies]
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+thiserror = "1.0"
+async-trait = "0.1"
+
+[dev-dependencies]
+serde_yaml = "0.9"
