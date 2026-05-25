@@ -13,6 +13,7 @@
 - [ ] `cargo clippy --workspace` 零 warning
 - [ ] `cargo fmt -- --check` 零变更
 - [ ] 已创建功能分支：`git checkout -b feat/v0.2.0`
+- [ ] Workspace root `Cargo.toml` 已添加 `"crates/tavern-config"`（若独立 crate）
 
 ---
 
@@ -29,7 +30,7 @@
 | **Phase 7** | Docker + CI | Dockerfile、docker-compose、`.sqlx` 离线数据 | 4h | Phase 1 |
 | **Phase 8** | 集成测试 + 回归 | 端到端测试、向后兼容验证 | 4h | Phase 1-7 |
 
-**总预估**：约 31 小时（4 个工作日，按每天 8 小时计）
+**总预估**：约 31 小时（建议预留 **38 小时**，含 20% 缓冲。sqlx/Docker 环节易超时）
 
 ---
 
@@ -129,7 +130,7 @@ CREATE INDEX idx_instances_workflow ON workflow_instances(workflow_id);
 **修改点**：
 1. 保留现有 `MemoryEventStore`（向后兼容，测试默认）
 2. 在 `#[cfg(feature = "sqlite")]` 下新增 `SqliteEventStore`
-3. `EventStore::list_by_status` 从默认空实现改为必须实现（已在 trait 中定义）
+3. `EventStore::list_by_status` 保留 trait 默认实现（向后兼容）；为 `MemoryEventStore` 提供覆盖实现（O(n) 遍历，测试用足够）
 4. `append()` 使用整存整取（`serde_json::to_string`），反序列化用 `from_str`
 5. `list_by_status()` 利用 `workflow_instances` 辅助表
 6. `save_snapshot` / `load_snapshot` 使用 SQLite upsert 语法
@@ -148,7 +149,7 @@ CREATE INDEX idx_instances_workflow ON workflow_instances(workflow_id);
 ### 2.4 测试
 
 **新增测试**（`crates/tavern-comp/src/store.rs` `#[cfg(test)]`）：
-- [ ] `MemoryEventStore` 保留现有测试
+- [ ] `MemoryEventStore` 保留现有测试，`list_by_status` 覆盖实现正确工作
 - [ ] `SqliteEventStore::new(":memory:")` — 内存 SQLite 测试（无需文件）
 - [ ] `append` + `read_stream` 往返测试
 - [ ] `list_by_status` 筛选测试
@@ -240,15 +241,20 @@ let auth_layer = axum::middleware::from_fn_with_state(
 let public_routes = Router::new()
     .route("/health", get(handlers::health_handler));
 
-let protected_routes = Router::new()
+let mut protected_routes = Router::new()
     .route("/agents", get(handlers::list_agents_handler))
     // ... 所有其他端点
     .layer(auth_layer);
 
+// metrics_public = false 时 /metrics 归入 protected
+if !config.metrics_public {
+    protected_routes = protected_routes.route("/metrics", get(handlers::metrics_handler));
+}
+
 let app = public_routes.merge(protected_routes);
 ```
 
-**注意**：`/metrics` 的公开性由 `config.observability.metrics_public` 控制。若 `false`，归入 `protected_routes`。
+**注意**：`create_router` 签名从 `fn(state: Arc<AppState>)` 扩展为接受 `config: &ObservabilityConfig`，以支持运行时决定 `/metrics` 路由分组。`/metrics` 的公开性由 `config.metrics_public` 控制。
 
 ### 4.3 SSE 认证
 
@@ -466,9 +472,9 @@ cargo sqlx prepare --workspace  # 生成 .sqlx/query-*.json
 
 ### 9.1 端到端测试
 
-**文件**：`crates/tavern-server/src/main.rs` `#[cfg(test)]`
+**文件**：`crates/tavern-server/tests/integration_v020.rs`（新增独立集成测试目录）
 
-新增测试：
+使用 `#[tokio::test]` + `tower::ServiceExt::oneshot` 进行端到端测试：
 - [ ] 完整 Workflow 执行：POST `/workflows/:id/start` → SSE 接收事件 → GET `/executions/:id` 验证状态
 - [ ] 认证中间件：未认证访问 `/agents` → 401
 - [ ] 热重载 + 新 Agent 执行：修改 YAML → reload → POST `/agents/:id/execute`
@@ -513,30 +519,35 @@ crates/tavern-comp/migrations/sqlite/20260525000001_init.sql
 crates/tavern-comp/migrations/postgres/20260525000001_init.sql
 crates/tavern-comp/src/store_sqlite.rs    # 或内嵌到 store.rs
 crates/tavern-comp/src/store_postgres.rs  # #[cfg(feature = "postgres")]
-crates/tavern-config/
+crates/tavern-config/                     # 若独立 crate
 crates/tavern-config/Cargo.toml
 crates/tavern-config/src/lib.rs
 crates/tavern-server/src/auth.rs
 crates/tavern-server/src/config.rs        # 若未独立 crate
 crates/tavern-server/src/sse.rs
 crates/tavern-server/src/shutdown.rs
+crates/tavern-server/tests/integration_v020.rs  # 端到端集成测试
 Dockerfile
 docker-compose.yml
 .sqlx/                                    # git tracked
+.gitignore                                # 排除 *.db
 ```
 
 ### 修改文件
 
 ```
 crates/tavern-comp/Cargo.toml             # +sqlx, +features
-crates/tavern-comp/src/store.rs           # +SqliteEventStore +PostgresEventStore
+Cargo.toml                                # +"crates/tavern-config" workspace member
+crates/tavern-comp/Cargo.toml             # +sqlx, +features
+crates/tavern-comp/src/store.rs           # +SqliteEventStore +PostgresEventStore +MemoryEventStore::list_by_status
 crates/tavern-comp/src/lib.rs             # 条件编译导出
+crates/tavern-comp/src/handle.rs          # +Drop 清理广播发送器
 crates/tavern-hero/src/registry.rs        # +clear()
 crates/tavern-hero/src/hero.rs            # +reload_from_dir()
 crates/tavern-server/Cargo.toml           # +tavern-config, +jsonwebtoken, +figment
-crates/tavern-server/src/router.rs        # +auth layer, +SSE route
+crates/tavern-server/src/router.rs        # +auth layer, +SSE route, +metrics 路由分组
 crates/tavern-server/src/handlers.rs      # +auth handler, +SSE handler, health增强
-crates/tavern-server/src/state.rs         # +config, +broadcasts
+crates/tavern-server/src/state.rs         # +config: TavernConfig, +broadcasts
 crates/tavern-server/src/main.rs          # +config load, +graceful shutdown, +watchers
 .github/workflows/ci.yml                  # +sqlx prepare check
 ```
