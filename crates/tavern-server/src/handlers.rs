@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
-use tavern_comp::{CompError, EventStore};
+use tavern_comp::CompError;
 use tavern_core::RuntimeError;
 use tavern_hero::TavernError;
 

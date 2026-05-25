@@ -4,6 +4,7 @@ members = [
     "crates/tavern-adapters",
     "crates/tavern-hero",
     "crates/tavern-comp",
+    "crates/tavern-config",
     "crates/tavern-server",
 ]
 resolver = "2"

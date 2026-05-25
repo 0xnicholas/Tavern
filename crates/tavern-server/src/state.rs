@@ -20,7 +20,7 @@ pub struct AppState {
     /// 工作流最大并发数
     pub max_concurrency: usize,
     /// 事件存储
-    pub event_store: Arc<tavern_comp::MemoryEventStore>,
+    pub event_store: Arc<dyn tavern_comp::EventStore>,
     /// 活跃执行实例的信号通道，用于 signal/cancel 操作
     pub execution_handles: Arc<RwLock<HashMap<String, mpsc::Sender<WorkflowEvent>>>>,
 }

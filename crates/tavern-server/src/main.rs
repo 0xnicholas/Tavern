@@ -14,43 +14,55 @@ mod state;
 
 #[tokio::main]
 async fn main() {
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
-        )
-        .init();
-
-    let runtime_url = match std::env::var("RUNTIME_URL") {
-        Ok(v) => v,
-        Err(_) => {
-            tracing::error!("RUNTIME_URL environment variable is required");
+    let config = match tavern_config::TavernConfig::load() {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::error!("failed to load config: {}", e);
             std::process::exit(1);
         }
     };
-    let agent_config_dir =
-        std::env::var("AGENT_CONFIG_DIR").unwrap_or_else(|_| "./configs/agents".to_string());
-    let server_host = std::env::var("SERVER_HOST").unwrap_or_else(|_| "0.0.0.0".to_string());
-    let server_port = std::env::var("SERVER_PORT").unwrap_or_else(|_| "3000".to_string());
+
+    // Initialize tracing based on log_format
+    let log_format = config.observability.log_format.clone();
+    let env_filter = tracing_subscriber::EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
+    match log_format.as_str() {
+        "json" => {
+            tracing_subscriber::fmt()
+                .json()
+                .with_env_filter(env_filter)
+                .init();
+        }
+        _ => {
+            tracing_subscriber::fmt()
+                .with_env_filter(env_filter)
+                .init();
+        }
+    }
+
+    let runtime_url = if config.runtime.url.is_empty() {
+        tracing::error!("runtime.url is required (set RUNTIME_URL or TAVERN_RUNTIME_URL)");
+        std::process::exit(1);
+    } else {
+        config.runtime.url.clone()
+    };
 
     let runtime: Arc<dyn Runtime> = Arc::new(
         tavern_adapters::PandariaRuntime::new(runtime_url).expect("failed to build HTTP client"),
     );
 
     let hero = TavernHero::new(runtime);
-    let config_path = Path::new(&agent_config_dir);
-    if config_path.exists() {
-        if let Err(e) = hero.load_from_dir(config_path) {
+    let agent_config_path = Path::new(&config.server.agent_config_dir);
+    if agent_config_path.exists() {
+        if let Err(e) = hero.load_from_dir(agent_config_path) {
             tracing::error!("failed to load agent configs: {}", e);
         }
     }
 
     let mut registry = tavern_comp::WorkflowRegistry::new();
-    let workflow_config_dir =
-        std::env::var("WORKFLOW_CONFIG_DIR").unwrap_or_else(|_| "./configs/workflows".to_string());
-    let workflow_path = Path::new(&workflow_config_dir);
-    if workflow_path.exists() {
-        if let Err(e) = registry.load_from_dir(workflow_path) {
+    let workflow_config_path = Path::new(&config.server.workflow_config_dir);
+    if workflow_config_path.exists() {
+        if let Err(e) = registry.load_from_dir(workflow_config_path) {
             tracing::error!("failed to load workflow configs: {}", e);
         }
     }
@@ -59,31 +71,39 @@ async fn main() {
     let registry = Arc::new(tokio::sync::RwLock::new(registry));
 
     // 启动 Workflow 配置文件监听（自动热重载）
-    let watch_path = workflow_path.to_path_buf();
-    let watch_registry = registry.clone();
-    tokio::spawn(async move {
-        start_workflow_watcher(watch_path, watch_registry).await;
-    });
+    if config.reload.enabled {
+        let watch_path = workflow_config_path.to_path_buf();
+        let watch_registry = registry.clone();
+        let debounce_ms = config.reload.debounce_ms;
+        tokio::spawn(async move {
+            start_workflow_watcher(watch_path, watch_registry, debounce_ms).await;
+        });
+    }
 
-    const DEFAULT_MAX_CONCURRENCY: usize = usize::MAX;
-    let max_concurrency = std::env::var("MAX_WORKFLOW_CONCURRENCY")
-        .ok()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(DEFAULT_MAX_CONCURRENCY);
+    // 根据配置创建 EventStore
+    let event_store: Arc<dyn tavern_comp::EventStore> = match config.store.store_type.as_str() {
+        "sqlite" => {
+            let store = tavern_comp::SqliteEventStore::new(&config.store.database_url)
+                .await
+                .expect("failed to initialize SQLite event store");
+            Arc::new(store)
+        }
+        _ => Arc::new(tavern_comp::MemoryEventStore::new()),
+    };
 
     let app = router::create_router(Arc::new(state::AppState {
         hero,
         registry,
-        workflow_config_dir: workflow_config_dir.clone(),
+        workflow_config_dir: config.server.workflow_config_dir.clone(),
         workflow_executions: Arc::new(AtomicU64::new(0)),
         workflow_failures: Arc::new(AtomicU64::new(0)),
         workflow_duration_ms_total: Arc::new(AtomicU64::new(0)),
-        max_concurrency,
-        event_store: Arc::new(tavern_comp::MemoryEventStore::new()),
+        max_concurrency: config.server.max_workflow_concurrency,
+        event_store,
         execution_handles: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
     }));
 
-    let addr: SocketAddr = match format!("{}:{}", server_host, server_port).parse() {
+    let addr: SocketAddr = match format!("{}:{}", config.server.host, config.server.port).parse() {
         Ok(a) => a,
         Err(e) => {
             tracing::error!("invalid server address: {}", e);
@@ -100,16 +120,17 @@ async fn main() {
             std::process::exit(1);
         }
     };
-    if let Err(e) = axum::serve(listener, app).await {
-        tracing::error!("server error: {}", e);
-        std::process::exit(1);
-    }
+
+    axum::serve(listener, app)
+        .await
+        .unwrap();
 }
 
 /// 监听 Workflow 配置目录，文件变更时自动重载。
 async fn start_workflow_watcher(
     path: std::path::PathBuf,
     registry: Arc<tokio::sync::RwLock<tavern_comp::WorkflowRegistry>>,
+    debounce_ms: u64,
 ) {
     if !path.exists() {
         return;
@@ -149,7 +170,7 @@ async fn start_workflow_watcher(
                     // Debounce：收到事件后等待 500ms，期间有新事件则继续等待
                     loop {
                         match tokio::time::timeout(
-                            tokio::time::Duration::from_millis(500),
+                            tokio::time::Duration::from_millis(debounce_ms),
                             rx.recv(),
                         )
                         .await
