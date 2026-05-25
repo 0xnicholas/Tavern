@@ -98,3 +98,146 @@ impl EventStore for MemoryEventStore {
         Ok(snapshots.get(instance_id).cloned())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::Utc;
+    use serde_json::json;
+
+    #[tokio::test]
+    async fn test_memory_store_append_and_read() {
+        let store = MemoryEventStore::new();
+        let instance_id = "test-instance";
+
+        store
+            .append(
+                instance_id,
+                WorkflowEvent::InstanceCreated {
+                    workflow_id: "wf1".to_string(),
+                    inputs: json!({"key": "val"}),
+                },
+            )
+            .await
+            .unwrap();
+
+        store
+            .append(instance_id, WorkflowEvent::InstanceStarted)
+            .await
+            .unwrap();
+
+        let events = store.read_stream(instance_id).await.unwrap();
+        assert_eq!(events.len(), 2);
+        assert!(matches!(events[0], WorkflowEvent::InstanceCreated { .. }));
+        assert!(matches!(events[1], WorkflowEvent::InstanceStarted));
+    }
+
+    #[tokio::test]
+    async fn test_memory_store_read_empty_stream() {
+        let store = MemoryEventStore::new();
+        let events = store.read_stream("nonexistent").await.unwrap();
+        assert!(events.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_memory_store_list_by_status() {
+        let store = MemoryEventStore::new();
+
+        // Instance 1: Completed
+        store
+            .append(
+                "i1",
+                WorkflowEvent::InstanceCreated {
+                    workflow_id: "wf".to_string(),
+                    inputs: json!({}),
+                },
+            )
+            .await
+            .unwrap();
+        store
+            .append("i1", WorkflowEvent::InstanceStarted)
+            .await
+            .unwrap();
+        store
+            .append(
+                "i1",
+                WorkflowEvent::WorkflowCompleted {
+                    outputs: json!({}),
+                    completed_at: Utc::now(),
+                },
+            )
+            .await
+            .unwrap();
+
+        // Instance 2: Failed
+        store
+            .append(
+                "i2",
+                WorkflowEvent::InstanceCreated {
+                    workflow_id: "wf".to_string(),
+                    inputs: json!({}),
+                },
+            )
+            .await
+            .unwrap();
+        store
+            .append("i2", WorkflowEvent::InstanceStarted)
+            .await
+            .unwrap();
+        store
+            .append(
+                "i2",
+                WorkflowEvent::WorkflowFailed {
+                    reason: "boom".to_string(),
+                    failed_at: Utc::now(),
+                },
+            )
+            .await
+            .unwrap();
+
+        let completed = store
+            .list_by_status(InstanceStatus::Completed)
+            .await
+            .unwrap();
+        assert_eq!(completed.len(), 1);
+        assert_eq!(completed[0], "i1");
+
+        let failed = store.list_by_status(InstanceStatus::Failed).await.unwrap();
+        assert_eq!(failed.len(), 1);
+        assert_eq!(failed[0], "i2");
+
+        let running = store.list_by_status(InstanceStatus::Running).await.unwrap();
+        assert!(running.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_memory_store_snapshot_roundtrip() {
+        let store = MemoryEventStore::new();
+        let instance_id = "snap-instance";
+
+        let mut state = InstanceState {
+            id: instance_id.to_string(),
+            workflow_id: "wf1".to_string(),
+            status: InstanceStatus::Running,
+            ..Default::default()
+        };
+        state.context = json!({"foo": "bar"});
+
+        store.save_snapshot(instance_id, &state).await.unwrap();
+
+        let loaded = store.load_snapshot(instance_id).await.unwrap();
+        assert!(loaded.is_some());
+        let loaded = loaded.unwrap();
+        assert_eq!(loaded.id, instance_id);
+        assert_eq!(loaded.workflow_id, "wf1");
+        assert!(matches!(loaded.status, InstanceStatus::Running));
+        assert_eq!(loaded.context, json!({"foo": "bar"}));
+    }
+
+    #[tokio::test]
+    async fn test_memory_store_load_snapshot_missing() {
+        let store = MemoryEventStore::new();
+        let loaded = store.load_snapshot("missing").await.unwrap();
+        assert!(loaded.is_none());
+    }
+}

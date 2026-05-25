@@ -976,3 +976,160 @@ async fn test_planning_error_fails_workflow() {
     let err = engine.run(&wf, json!({"input": "x"})).await.unwrap_err();
     assert!(matches!(err, CompError::PlanningError { .. }));
 }
+
+// ── V2 Event-Driven tests ──
+
+#[tokio::test]
+async fn test_start_and_await_completion_equivalent_to_run() {
+    let engine =
+        make_engine(|_agent_id, _task, _context, _system_prompt, _model| Ok(json!("done")));
+    let wf = simple_workflow();
+
+    let run_result = engine.run(&wf, json!({"input": "hello"})).await.unwrap();
+
+    let mut handle = engine.start(&wf, json!({"input": "hello"})).await.unwrap();
+    let start_result = handle.await_completion().await.unwrap();
+
+    assert_eq!(run_result.context, start_result.context);
+    assert_eq!(run_result.outputs, start_result.outputs);
+    assert_eq!(
+        run_result.step_results.len(),
+        start_result.step_results.len()
+    );
+}
+
+#[tokio::test]
+async fn test_signal_wait_and_resume() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+    use std::time::Duration;
+
+    let call_count = Arc::new(AtomicUsize::new(0));
+    let cc = call_count.clone();
+    let engine = make_engine(move |_agent_id, _task, _context, _system_prompt, _model| {
+        cc.fetch_add(1, Ordering::SeqCst);
+        Ok(json!("step_done"))
+    });
+
+    let mut wf = simple_workflow();
+    wf.steps[0].wait_for_signal = Some("approve".to_string());
+
+    let mut handle = engine.start(&wf, json!({"input": "hello"})).await.unwrap();
+    let _execution_id = handle.id().to_string();
+
+    // Wait a bit for the step to complete and enter signal wait
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    let state = handle.query_state(engine.store.as_ref()).await.unwrap();
+    assert!(
+        matches!(state.status, InstanceStatus::WaitingForSignal { ref signal } if signal == "approve"),
+        "expected WaitingForSignal, got {:?}",
+        state.status
+    );
+
+    // Send signal
+    handle
+        .signal("approve", json!({"by": "admin"}))
+        .await
+        .unwrap();
+
+    let result = tokio::time::timeout(Duration::from_secs(5), handle.await_completion())
+        .await
+        .unwrap()
+        .unwrap();
+
+    assert_eq!(result.context["result"], "step_done");
+    assert_eq!(result.context["signals"]["approve"]["by"], "admin");
+    assert_eq!(call_count.load(Ordering::SeqCst), 1);
+    drop(call_count);
+}
+
+#[tokio::test]
+async fn test_signal_timeout_fails_workflow() {
+    use std::time::Duration;
+
+    let engine =
+        make_engine(|_agent_id, _task, _context, _system_prompt, _model| Ok(json!("done")));
+
+    let mut wf = simple_workflow();
+    wf.steps[0].wait_for_signal = Some("approve".to_string());
+    wf.steps[0].signal_timeout = Some(1); // 1 second timeout
+
+    let mut handle = engine.start(&wf, json!({"input": "hello"})).await.unwrap();
+
+    let err = tokio::time::timeout(Duration::from_secs(5), handle.await_completion())
+        .await
+        .unwrap()
+        .unwrap_err();
+
+    assert!(
+        matches!(&err,
+            CompError::StepFailed { step_id, reason } if step_id == "s1" && reason.contains("timeout")
+        ),
+        "expected signal timeout error, got: {:?}",
+        err
+    );
+}
+
+#[tokio::test]
+async fn test_cancel_execution() {
+    use std::time::Duration;
+    use tavern_core::Runtime;
+
+    struct SlowRuntime;
+
+    #[async_trait::async_trait]
+    impl Runtime for SlowRuntime {
+        async fn execute(
+            &self,
+            _agent_id: &str,
+            _task: &str,
+            _context: Option<Value>,
+            _system_prompt: &str,
+            _model: &str,
+        ) -> Result<Value, tavern_core::RuntimeError> {
+            tokio::time::sleep(Duration::from_secs(10)).await;
+            Ok(json!("done"))
+        }
+    }
+
+    let runtime: Arc<dyn Runtime> = Arc::new(SlowRuntime);
+    let hero = TavernHero::new(runtime);
+
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("agent.yaml"),
+        r#"
+id: test_agent
+name: Test Agent
+model:
+  provider: openai
+  name: gpt-4o
+instructions: test
+"#,
+    )
+    .unwrap();
+    hero.load_agent(dir.path().join("agent.yaml").as_path())
+        .unwrap();
+
+    let engine = WorkflowEngine::new(Arc::new(hero));
+    let wf = simple_workflow();
+
+    let mut handle = engine.start(&wf, json!({"input": "hello"})).await.unwrap();
+
+    // Give the step time to start
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    handle.cancel().await.unwrap();
+
+    let err = tokio::time::timeout(Duration::from_secs(5), handle.await_completion())
+        .await
+        .unwrap()
+        .unwrap_err();
+
+    assert!(
+        matches!(err, CompError::StepFailed { .. }),
+        "expected failure after cancel, got: {:?}",
+        err
+    );
+}

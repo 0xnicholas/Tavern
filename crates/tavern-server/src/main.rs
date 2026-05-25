@@ -699,4 +699,405 @@ instructions: 研究
     // NOTE: 循环依赖 Workflow 的场景已由 `tavern-comp` 的 `WorkflowRegistry::register`
     // 在注册时拦截（`validate_static` → `validate_dag`），server 层不会收到非法 Workflow。
     // 对应单元测试：`crates/tavern-comp/src/validator.rs::tests::test_dag_cycle`
+
+    // ── V2 API tests ──
+
+    #[tokio::test]
+    async fn test_start_workflow_returns_202_and_execution_id() {
+        let app = create_test_app();
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/workflows/content_pipeline/start")
+                    .header("content-type", "application/json")
+                    .body(Body::from(json!({"topic": "AI"}).to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::ACCEPTED);
+
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert!(json["execution_id"].as_str().is_some());
+    }
+
+    #[tokio::test]
+    async fn test_get_execution_not_found() {
+        let app = create_test_app();
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/executions/nonexistent")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn test_get_execution_events_not_found() {
+        let app = create_test_app();
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/executions/nonexistent/events")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn test_signal_execution_not_found() {
+        let app = create_test_app();
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/executions/nonexistent/signal")
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        json!({"signal_name": "approve", "payload": {}}).to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn test_cancel_execution_not_found() {
+        let app = create_test_app();
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/executions/nonexistent/cancel")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn test_start_and_get_execution_flow() {
+        use std::time::Duration;
+
+        let app = create_test_app();
+
+        // Start workflow
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/workflows/content_pipeline/start")
+                    .header("content-type", "application/json")
+                    .body(Body::from(json!({"topic": "AI"}).to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::ACCEPTED);
+
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        let execution_id = json["execution_id"].as_str().unwrap().to_string();
+
+        // Poll execution until completed (with timeout)
+        let mut status = String::new();
+        for _ in 0..50 {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            let response = app
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .uri(format!("/executions/{}", execution_id))
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::OK);
+
+            let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+                .await
+                .unwrap();
+            let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+            status = json["status"].as_str().unwrap().to_string();
+            if status == "completed" || status == "failed" {
+                break;
+            }
+        }
+        assert_eq!(status, "completed");
+
+        // Get events
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/executions/{}/events", execution_id))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let events: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert!(events.as_array().unwrap().len() >= 2);
+    }
+
+    #[tokio::test]
+    async fn test_signal_workflow_execution() {
+        use std::time::Duration;
+
+        let wf = tavern_comp::Workflow {
+            id: "signal_flow".to_string(),
+            name: "Signal Flow".to_string(),
+            description: None,
+            steps: vec![tavern_comp::Step {
+                id: "s1".to_string(),
+                agent_id: "researcher".to_string(),
+                task: "do something".to_string(),
+                depends_on: vec![],
+                output_key: None,
+                timeout: None,
+                retries: None,
+                retry_delay: None,
+                wait_for_signal: Some("approve".to_string()),
+                signal_timeout: None,
+                expected_output: None,
+            }],
+            inputs: vec![],
+            outputs: vec![],
+            process: tavern_comp::Process::Sequential,
+            planning: None,
+        };
+        let app = create_test_app_with_workflow(|_, _, _, _, _| Ok(json!("done")), wf);
+
+        // Start workflow
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/workflows/signal_flow/start")
+                    .header("content-type", "application/json")
+                    .body(Body::from(json!({}).to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::ACCEPTED);
+
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        let execution_id = json["execution_id"].as_str().unwrap().to_string();
+
+        // Wait for step to enter signal wait
+        let mut status = String::new();
+        for _ in 0..50 {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            let response = app
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .uri(format!("/executions/{}", execution_id))
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+
+            let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+                .await
+                .unwrap();
+            let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+            status = json["status"].as_str().unwrap().to_string();
+            if status == "waiting_for_signal" {
+                break;
+            }
+        }
+        assert_eq!(status, "waiting_for_signal");
+
+        // Send signal
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/executions/{}/signal", execution_id))
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        json!({"signal_name": "approve", "payload": {"by": "admin"}}).to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::ACCEPTED);
+
+        // Poll until completed
+        for _ in 0..50 {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            let response = app
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .uri(format!("/executions/{}", execution_id))
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+
+            let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+                .await
+                .unwrap();
+            let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+            status = json["status"].as_str().unwrap().to_string();
+            if status == "completed" || status == "failed" {
+                break;
+            }
+        }
+        assert_eq!(status, "completed");
+    }
+
+    #[tokio::test]
+    async fn test_cancel_workflow_execution() {
+        use std::time::Duration;
+        use tavern_core::Runtime;
+
+        struct SlowRuntime;
+        #[async_trait::async_trait]
+        impl Runtime for SlowRuntime {
+            async fn execute(
+                &self,
+                _agent_id: &str,
+                _task: &str,
+                _context: Option<Value>,
+                _system_prompt: &str,
+                _model: &str,
+            ) -> Result<Value, tavern_core::RuntimeError> {
+                tokio::time::sleep(Duration::from_secs(10)).await;
+                Ok(json!("done"))
+            }
+        }
+
+        let runtime: Arc<dyn Runtime> = Arc::new(SlowRuntime);
+        let hero = TavernHero::new(runtime);
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("agent.yaml"),
+            r#"
+id: researcher
+name: 研究员
+model:
+  provider: openai
+  name: gpt-4o
+instructions: 研究
+"#,
+        )
+        .unwrap();
+        hero.load_from_dir(dir.path()).unwrap();
+        let hero = Arc::new(hero);
+
+        let mut registry = tavern_comp::WorkflowRegistry::new();
+        registry.register(default_workflow()).unwrap();
+        let registry = Arc::new(tokio::sync::RwLock::new(registry));
+
+        let app = router::create_router(Arc::new(AppState {
+            hero,
+            registry,
+            workflow_config_dir: "./configs/workflows".to_string(),
+            workflow_executions: Arc::new(AtomicU64::new(0)),
+            workflow_failures: Arc::new(AtomicU64::new(0)),
+            workflow_duration_ms_total: Arc::new(AtomicU64::new(0)),
+            max_concurrency: usize::MAX,
+            event_store: Arc::new(tavern_comp::MemoryEventStore::new()),
+            execution_handles: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
+        }));
+
+        // Start workflow
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/workflows/content_pipeline/start")
+                    .header("content-type", "application/json")
+                    .body(Body::from(json!({"topic": "AI"}).to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::ACCEPTED);
+
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        let execution_id = json["execution_id"].as_str().unwrap().to_string();
+
+        // Wait a bit for step to start
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        // Cancel
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/executions/{}/cancel", execution_id))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::ACCEPTED);
+
+        // Poll until failed
+        let mut status = String::new();
+        for _ in 0..50 {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            let response = app
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .uri(format!("/executions/{}", execution_id))
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+
+            let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+                .await
+                .unwrap();
+            let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+            status = json["status"].as_str().unwrap().to_string();
+            if status == "failed" {
+                break;
+            }
+        }
+        assert_eq!(status, "failed");
+    }
 }
