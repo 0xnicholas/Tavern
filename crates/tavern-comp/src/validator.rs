@@ -91,6 +91,7 @@ pub fn validate_dag(workflow: &Workflow) -> Result<Vec<String>, CompError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::workflow::{ManagerConfig, Process};
 
     fn make_step(id: &str, deps: Vec<&str>) -> crate::workflow::Step {
         crate::workflow::Step {
@@ -102,8 +103,9 @@ mod tests {
             timeout: None,
             retries: None,
             retry_delay: None,
-        wait_for_signal: None,
-        signal_timeout: None,
+            wait_for_signal: None,
+            signal_timeout: None,
+            expected_output: None,
         }
     }
 
@@ -120,6 +122,8 @@ mod tests {
             ],
             inputs: vec![],
             outputs: vec![],
+            process: Process::Sequential,
+            planning: None,
         };
         let order = validate_dag(&workflow).unwrap();
         assert_eq!(order, vec!["a", "b", "c"]);
@@ -139,6 +143,8 @@ mod tests {
             ],
             inputs: vec![],
             outputs: vec![],
+            process: Process::Sequential,
+            planning: None,
         };
         let order = validate_dag(&workflow).unwrap();
         assert_eq!(order[0], "a");
@@ -158,6 +164,8 @@ mod tests {
             ],
             inputs: vec![],
             outputs: vec![],
+            process: Process::Sequential,
+            planning: None,
         };
         let err = validate_dag(&workflow).unwrap_err();
         assert!(matches!(err, CompError::CyclicDependency));
@@ -172,8 +180,54 @@ mod tests {
             steps: vec![make_step("a", vec![]), make_step("b", vec!["x"])],
             inputs: vec![],
             outputs: vec![],
+            process: Process::Sequential,
+            planning: None,
         };
         let err = validate_dag(&workflow).unwrap_err();
         assert!(matches!(err, CompError::StepNotFound { id } if id == "x"));
+    }
+
+    // ── Phase 1: Hierarchical 校验测试 ──
+
+    #[test]
+    fn test_hierarchical_skips_dag_validation() {
+        let workflow = Workflow {
+            id: "w1".to_string(),
+            name: "test".to_string(),
+            description: None,
+            steps: vec![
+                make_step("a", vec!["c"]),
+                make_step("b", vec!["a"]),
+                make_step("c", vec!["b"]),
+            ],
+            inputs: vec![],
+            outputs: vec![],
+            process: Process::Hierarchical(ManagerConfig {
+                agent_id: "manager".to_string(),
+                instructions: None,
+            }),
+            planning: None,
+        };
+        // This workflow has a cycle (a -> c -> b -> a), but hierarchical mode skips DAG
+        assert!(workflow.validate_static().is_ok());
+    }
+
+    #[test]
+    fn test_hierarchical_manager_id_must_be_valid() {
+        let workflow = Workflow {
+            id: "w1".to_string(),
+            name: "test".to_string(),
+            description: None,
+            steps: vec![make_step("a", vec![])],
+            inputs: vec![],
+            outputs: vec![],
+            process: Process::Hierarchical(ManagerConfig {
+                agent_id: "invalid id!".to_string(),
+                instructions: None,
+            }),
+            planning: None,
+        };
+        let err = workflow.validate_static().unwrap_err();
+        assert!(matches!(err, CompError::ConfigParse { .. }));
     }
 }

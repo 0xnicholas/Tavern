@@ -3,8 +3,8 @@ name: 写作助手
 description: 擅长撰写各类文章和文案
 
 model:
-  provider: openai
-  name: gpt-4o
+  provider: deepseek
+  name: deepseek-v4-pro
   temperature: 0.7
 
 instructions: |

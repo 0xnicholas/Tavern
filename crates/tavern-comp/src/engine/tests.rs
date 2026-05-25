@@ -5,13 +5,13 @@ use serde_json::json;
 use tavern_adapters::MockRuntime;
 use tavern_hero::TavernHero;
 
-use crate::workflow::{InputDef, OutputDef, Step};
+use crate::workflow::{InputDef, ManagerConfig, OutputDef, PlanningConfig, Process, Step};
 
 use super::*;
 
 fn make_engine<F>(handler: F) -> WorkflowEngine
 where
-    F: Fn(&str, &str, Option<Value>) -> Result<Value, tavern_core::RuntimeError>
+    F: Fn(&str, &str, Option<Value>, &str, &str) -> Result<Value, tavern_core::RuntimeError>
         + Send
         + Sync
         + 'static,
@@ -53,8 +53,9 @@ fn simple_workflow() -> Workflow {
             timeout: None,
             retries: None,
             retry_delay: None,
-        wait_for_signal: None,
-        signal_timeout: None,
+            wait_for_signal: None,
+            signal_timeout: None,
+            expected_output: None,
         }],
         inputs: vec![InputDef {
             name: "input".to_string(),
@@ -65,12 +66,15 @@ fn simple_workflow() -> Workflow {
             name: "out".to_string(),
             value: "{{result}}".to_string(),
         }],
+        process: Process::Sequential,
+        planning: None,
     }
 }
 
 #[tokio::test]
 async fn test_run_success() {
-    let engine = make_engine(|_agent_id, _task, _context| Ok(json!("done")));
+    let engine =
+        make_engine(|_agent_id, _task, _context, _system_prompt, _model| Ok(json!("done")));
     let wf = simple_workflow();
     let result = engine.run(&wf, json!({"input": "hello"})).await.unwrap();
 
@@ -85,7 +89,8 @@ async fn test_run_success() {
 
 #[tokio::test]
 async fn test_run_missing_input() {
-    let engine = make_engine(|_agent_id, _task, _context| Ok(json!("done")));
+    let engine =
+        make_engine(|_agent_id, _task, _context, _system_prompt, _model| Ok(json!("done")));
     let wf = simple_workflow();
     let err = engine.run(&wf, json!({})).await.unwrap_err();
     assert!(matches!(err, CompError::MissingInput { name } if name == "input"));
@@ -93,7 +98,8 @@ async fn test_run_missing_input() {
 
 #[tokio::test]
 async fn test_run_agent_not_found() {
-    let engine = make_engine(|_agent_id, _task, _context| Ok(json!("done")));
+    let engine =
+        make_engine(|_agent_id, _task, _context, _system_prompt, _model| Ok(json!("done")));
     let mut wf = simple_workflow();
     wf.steps[0].agent_id = "unknown".to_string();
     let err = engine.run(&wf, json!({"input": "x"})).await.unwrap_err();
@@ -102,7 +108,7 @@ async fn test_run_agent_not_found() {
 
 #[tokio::test]
 async fn test_run_step_failure() {
-    let engine = make_engine(|_agent_id, _task, _context| {
+    let engine = make_engine(|_agent_id, _task, _context, _system_prompt, _model| {
         Err(tavern_core::RuntimeError::RequestFailed {
             status: 500,
             body: "boom".to_string(),
@@ -127,6 +133,8 @@ async fn test_run_timeout() {
             _agent_id: &str,
             _task: &str,
             _context: Option<Value>,
+            _system_prompt: &str,
+            _model: &str,
         ) -> Result<Value, tavern_core::RuntimeError> {
             tokio::time::sleep(Duration::from_secs(10)).await;
             Ok(json!("done"))
@@ -163,7 +171,8 @@ instructions: test
 
 #[tokio::test]
 async fn test_run_outputs_validation() {
-    let engine = make_engine(|_agent_id, _task, _context| Ok(json!("done")));
+    let engine =
+        make_engine(|_agent_id, _task, _context, _system_prompt, _model| Ok(json!("done")));
     let mut wf = simple_workflow();
     wf.outputs.push(OutputDef {
         name: "bad".to_string(),
@@ -175,7 +184,7 @@ async fn test_run_outputs_validation() {
 
 #[tokio::test]
 async fn test_run_pipeline() {
-    let engine = make_engine(|_agent_id, task, _context| {
+    let engine = make_engine(|_agent_id, task, _context, _system_prompt, _model| {
         if task.starts_with("research") {
             Ok(json!("research notes"))
         } else if task.starts_with("write") {
@@ -199,8 +208,9 @@ async fn test_run_pipeline() {
                 timeout: None,
                 retries: None,
                 retry_delay: None,
-            wait_for_signal: None,
-            signal_timeout: None,
+                wait_for_signal: None,
+                signal_timeout: None,
+                expected_output: None,
             },
             Step {
                 id: "write".to_string(),
@@ -211,8 +221,9 @@ async fn test_run_pipeline() {
                 timeout: None,
                 retries: None,
                 retry_delay: None,
-            wait_for_signal: None,
-            signal_timeout: None,
+                wait_for_signal: None,
+                signal_timeout: None,
+                expected_output: None,
             },
             Step {
                 id: "edit".to_string(),
@@ -223,8 +234,9 @@ async fn test_run_pipeline() {
                 timeout: None,
                 retries: None,
                 retry_delay: None,
-            wait_for_signal: None,
-            signal_timeout: None,
+                wait_for_signal: None,
+                signal_timeout: None,
+                expected_output: None,
             },
         ],
         inputs: vec![InputDef {
@@ -236,6 +248,8 @@ async fn test_run_pipeline() {
             name: "article".to_string(),
             value: "{{final}}".to_string(),
         }],
+        process: Process::Sequential,
+        planning: None,
     };
 
     let result = engine.run(&wf, json!({"topic": "AI"})).await.unwrap();
@@ -251,7 +265,7 @@ async fn test_run_retry_success() {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     let call_count = AtomicUsize::new(0);
-    let engine = make_engine(move |_agent_id, _task, _context| {
+    let engine = make_engine(move |_agent_id, _task, _context, _system_prompt, _model| {
         let count = call_count.fetch_add(1, Ordering::SeqCst);
         if count < 2 {
             Err(tavern_core::RuntimeError::RequestFailed {
@@ -269,7 +283,10 @@ async fn test_run_retry_success() {
 
     let result = engine.run(&wf, json!({"input": "x"})).await.unwrap();
     assert_eq!(result.context["result"], "success");
-    assert!(matches!(result.step_results["s1"].status, StepStatus::Completed));
+    assert!(matches!(
+        result.step_results["s1"].status,
+        StepStatus::Completed
+    ));
 }
 
 #[tokio::test]
@@ -277,7 +294,7 @@ async fn test_run_retry_exhausted() {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     let call_count = AtomicUsize::new(0);
-    let engine = make_engine(move |_agent_id, _task, _context| {
+    let engine = make_engine(move |_agent_id, _task, _context, _system_prompt, _model| {
         call_count.fetch_add(1, Ordering::SeqCst);
         Err(tavern_core::RuntimeError::RequestFailed {
             status: 500,
@@ -290,7 +307,9 @@ async fn test_run_retry_exhausted() {
     wf.steps[0].retry_delay = Some(0);
 
     let err = engine.run(&wf, json!({"input": "x"})).await.unwrap_err();
-    assert!(matches!(err, CompError::StepFailed { step_id, reason } if step_id == "s1" && reason.contains("always fail")));
+    assert!(
+        matches!(err, CompError::StepFailed { step_id, reason } if step_id == "s1" && reason.contains("always fail"))
+    );
 }
 
 #[tokio::test]
@@ -298,7 +317,7 @@ async fn test_run_retry_with_delay() {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     let call_count = AtomicUsize::new(0);
-    let engine = make_engine(move |_agent_id, _task, _context| {
+    let engine = make_engine(move |_agent_id, _task, _context, _system_prompt, _model| {
         let count = call_count.fetch_add(1, Ordering::SeqCst);
         if count == 0 {
             Err(tavern_core::RuntimeError::RequestFailed {
@@ -319,7 +338,10 @@ async fn test_run_retry_with_delay() {
     let elapsed = start.elapsed();
 
     assert_eq!(result.context["result"], "ok");
-    assert!(elapsed.as_secs_f64() >= 0.9, "retry delay should be at least 0.9s");
+    assert!(
+        elapsed.as_secs_f64() >= 0.9,
+        "retry delay should be at least 0.9s"
+    );
 }
 
 #[tokio::test]
@@ -340,6 +362,8 @@ async fn test_run_parallel_steps() {
             _agent_id: &str,
             _task: &str,
             _context: Option<Value>,
+            _system_prompt: &str,
+            _model: &str,
         ) -> Result<Value, tavern_core::RuntimeError> {
             self.call_count.fetch_add(1, Ordering::SeqCst);
             tokio::time::sleep(Duration::from_millis(self.delay_ms)).await;
@@ -386,8 +410,9 @@ instructions: test
                 timeout: None,
                 retries: None,
                 retry_delay: None,
-            wait_for_signal: None,
-            signal_timeout: None,
+                wait_for_signal: None,
+                signal_timeout: None,
+                expected_output: None,
             },
             Step {
                 id: "b".to_string(),
@@ -398,12 +423,15 @@ instructions: test
                 timeout: None,
                 retries: None,
                 retry_delay: None,
-            wait_for_signal: None,
-            signal_timeout: None,
+                wait_for_signal: None,
+                signal_timeout: None,
+                expected_output: None,
             },
         ],
         inputs: vec![],
         outputs: vec![],
+        process: Process::Sequential,
+        planning: None,
     };
 
     let start = Instant::now();
@@ -438,6 +466,8 @@ async fn test_run_max_concurrency() {
             _agent_id: &str,
             _task: &str,
             _context: Option<Value>,
+            _system_prompt: &str,
+            _model: &str,
         ) -> Result<Value, tavern_core::RuntimeError> {
             self.call_count.fetch_add(1, Ordering::SeqCst);
             tokio::time::sleep(Duration::from_millis(self.delay_ms)).await;
@@ -484,8 +514,9 @@ instructions: test
                 timeout: None,
                 retries: None,
                 retry_delay: None,
-            wait_for_signal: None,
-            signal_timeout: None,
+                wait_for_signal: None,
+                signal_timeout: None,
+                expected_output: None,
             },
             Step {
                 id: "b".to_string(),
@@ -496,8 +527,9 @@ instructions: test
                 timeout: None,
                 retries: None,
                 retry_delay: None,
-            wait_for_signal: None,
-            signal_timeout: None,
+                wait_for_signal: None,
+                signal_timeout: None,
+                expected_output: None,
             },
             Step {
                 id: "c".to_string(),
@@ -508,12 +540,15 @@ instructions: test
                 timeout: None,
                 retries: None,
                 retry_delay: None,
-            wait_for_signal: None,
-            signal_timeout: None,
+                wait_for_signal: None,
+                signal_timeout: None,
+                expected_output: None,
             },
         ],
         inputs: vec![],
         outputs: vec![],
+        process: Process::Sequential,
+        planning: None,
     };
 
     let start = Instant::now();
@@ -550,6 +585,8 @@ async fn test_run_parallel_failure_cancels_others() {
             _agent_id: &str,
             task: &str,
             _context: Option<Value>,
+            _system_prompt: &str,
+            _model: &str,
         ) -> Result<Value, tavern_core::RuntimeError> {
             if task == "fail" {
                 return Err(tavern_core::RuntimeError::RequestFailed {
@@ -601,8 +638,9 @@ instructions: test
                 timeout: None,
                 retries: None,
                 retry_delay: None,
-            wait_for_signal: None,
-            signal_timeout: None,
+                wait_for_signal: None,
+                signal_timeout: None,
+                expected_output: None,
             },
             Step {
                 id: "fast".to_string(),
@@ -613,12 +651,15 @@ instructions: test
                 timeout: None,
                 retries: None,
                 retry_delay: None,
-            wait_for_signal: None,
-            signal_timeout: None,
+                wait_for_signal: None,
+                signal_timeout: None,
+                expected_output: None,
             },
         ],
         inputs: vec![],
         outputs: vec![],
+        process: Process::Sequential,
+        planning: None,
     };
 
     let start = Instant::now();
@@ -634,4 +675,304 @@ instructions: test
         elapsed.as_millis()
     );
     assert_eq!(completed_count.load(Ordering::SeqCst), 0);
+}
+
+// ── Hierarchical Process tests ──
+
+fn make_hierarchical_engine<F>(handler: F) -> WorkflowEngine
+where
+    F: Fn(&str, &str, Option<Value>, &str, &str) -> Result<Value, tavern_core::RuntimeError>
+        + Send
+        + Sync
+        + 'static,
+{
+    let runtime = Arc::new(MockRuntime::new(handler));
+    let hero = TavernHero::new(runtime);
+
+    let dir = tempfile::tempdir().unwrap();
+    // Manager agent
+    std::fs::write(
+        dir.path().join("manager.yaml"),
+        r#"
+id: manager
+name: Manager
+model:
+  provider: test
+  name: test
+instructions: You are a project manager.
+"#,
+    )
+    .unwrap();
+    // Worker agent
+    std::fs::write(
+        dir.path().join("worker.yaml"),
+        r#"
+id: test_agent
+name: Test Agent
+model:
+  provider: test
+  name: test
+instructions: test
+"#,
+    )
+    .unwrap();
+    hero.load_from_dir(dir.path()).unwrap();
+
+    WorkflowEngine::new(Arc::new(hero))
+}
+
+fn hierarchical_workflow() -> Workflow {
+    Workflow {
+        id: "hw1".to_string(),
+        name: "Hierarchical WF".to_string(),
+        description: None,
+        steps: vec![
+            Step {
+                id: "s1".to_string(),
+                agent_id: "test_agent".to_string(),
+                task: "task s1".to_string(),
+                depends_on: vec![],
+                output_key: Some("out_s1".to_string()),
+                timeout: None,
+                retries: None,
+                retry_delay: None,
+                wait_for_signal: None,
+                signal_timeout: None,
+                expected_output: None,
+            },
+            Step {
+                id: "s2".to_string(),
+                agent_id: "test_agent".to_string(),
+                task: "task s2".to_string(),
+                depends_on: vec![],
+                output_key: Some("out_s2".to_string()),
+                timeout: None,
+                retries: None,
+                retry_delay: None,
+                wait_for_signal: None,
+                signal_timeout: None,
+                expected_output: None,
+            },
+        ],
+        inputs: vec![],
+        outputs: vec![],
+        process: Process::Hierarchical(ManagerConfig {
+            agent_id: "manager".to_string(),
+            instructions: None,
+        }),
+        planning: None,
+    }
+}
+
+#[tokio::test]
+async fn test_hierarchical_delegate_then_done() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let call_count = AtomicUsize::new(0);
+
+    let engine = make_hierarchical_engine(move |agent_id, _task, _context, _sp, _model| {
+        if agent_id == "manager" {
+            let count = call_count.fetch_add(1, Ordering::SeqCst);
+            if count == 0 {
+                Ok(json!({"action": "delegate", "task_id": "s1", "agent_id": "test_agent"}))
+            } else {
+                Ok(json!({"action": "done"}))
+            }
+        } else {
+            Ok(json!("step result"))
+        }
+    });
+
+    let wf = hierarchical_workflow();
+    let result = engine.run(&wf, json!({})).await.unwrap();
+
+    eprintln!("DEBUG step_results: {:?}", result.step_results);
+    eprintln!("DEBUG context: {:?}", result.context);
+
+    assert!(result.step_results.contains_key("s1"));
+    assert!(matches!(
+        result.step_results["s1"].status,
+        StepStatus::Completed
+    ));
+    // s2 was never delegated
+    assert!(
+        !result.step_results.contains_key("s2")
+            || matches!(result.step_results["s2"].status, StepStatus::Pending)
+    );
+}
+
+#[tokio::test]
+async fn test_hierarchical_all_steps() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let call_count = AtomicUsize::new(0);
+
+    let engine = make_hierarchical_engine(move |agent_id, _task, _context, _sp, _model| {
+        if agent_id == "manager" {
+            let count = call_count.fetch_add(1, Ordering::SeqCst);
+            match count {
+                0 => Ok(json!({"action": "delegate", "task_id": "s1", "agent_id": "test_agent"})),
+                1 => Ok(json!({"action": "delegate", "task_id": "s2", "agent_id": "test_agent"})),
+                _ => Ok(json!({"action": "done"})),
+            }
+        } else {
+            Ok(json!("step result"))
+        }
+    });
+
+    let wf = hierarchical_workflow();
+    let result = engine.run(&wf, json!({})).await.unwrap();
+
+    assert_eq!(result.step_results.len(), 2);
+    assert!(matches!(
+        result.step_results["s1"].status,
+        StepStatus::Completed
+    ));
+    assert!(matches!(
+        result.step_results["s2"].status,
+        StepStatus::Completed
+    ));
+}
+
+#[tokio::test]
+async fn test_hierarchical_manager_loop_exceeded() {
+    let engine = make_hierarchical_engine(move |agent_id, _task, _context, _sp, _model| {
+        if agent_id == "manager" {
+            // Always delegate to s1, creating infinite loop
+            Ok(json!({"action": "delegate", "task_id": "s1", "agent_id": "test_agent"}))
+        } else {
+            Ok(json!("step result"))
+        }
+    });
+
+    let wf = hierarchical_workflow();
+    let err = engine.run(&wf, json!({})).await.unwrap_err();
+    assert!(matches!(
+        err,
+        CompError::ManagerLoopExceeded { max_loops: 100 }
+    ));
+}
+
+#[tokio::test]
+async fn test_hierarchical_manager_unknown_task_id() {
+    let engine = make_hierarchical_engine(move |agent_id, _task, _context, _sp, _model| {
+        if agent_id == "manager" {
+            Ok(json!({"action": "delegate", "task_id": "nonexistent", "agent_id": "test_agent"}))
+        } else {
+            Ok(json!("step result"))
+        }
+    });
+
+    let wf = hierarchical_workflow();
+    let err = engine.run(&wf, json!({})).await.unwrap_err();
+    assert!(matches!(err, CompError::ManagerError { .. }));
+    assert!(format!("{}", err).contains("nonexistent"));
+}
+
+#[tokio::test]
+async fn test_hierarchical_manager_non_json_response_with_retry() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let call_count = AtomicUsize::new(0);
+
+    let engine = make_hierarchical_engine(move |agent_id, _task, _context, _sp, _model| {
+        if agent_id == "manager" {
+            let count = call_count.fetch_add(1, Ordering::SeqCst);
+            if count == 0 {
+                Ok(json!("not json at all, just some text"))
+            } else {
+                // Retry: return valid JSON
+                Ok(json!({"action": "done"}))
+            }
+        } else {
+            Ok(json!("step result"))
+        }
+    });
+
+    let wf = hierarchical_workflow();
+    let result = engine.run(&wf, json!({})).await.unwrap();
+    // Manager retried and returned done
+    assert!(
+        result.step_results.is_empty()
+            || result
+                .step_results
+                .values()
+                .all(|r| matches!(r.status, StepStatus::Pending))
+    );
+}
+
+// ── Planning tests ──
+
+#[tokio::test]
+async fn test_planning_injects_context_into_task() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let call_count = AtomicUsize::new(0);
+
+    let engine = make_engine(move |_agent_id, _task, _context, _sp, _model| {
+        let count = call_count.fetch_add(1, Ordering::SeqCst);
+        if count == 0 {
+            // Planning phase: return a Plan
+            Ok(json!({
+                "overall_strategy": "Research first",
+                "steps": [{
+                    "task_id": "s1",
+                    "agent_id": "test_agent",
+                    "reasoning": "need data first",
+                    "expected_output": "a report",
+                    "dependencies": []
+                }]
+            }))
+        } else {
+            // Step execution
+            Ok(json!("done"))
+        }
+    });
+
+    let mut wf = simple_workflow();
+    wf.planning = Some(PlanningConfig {
+        enabled: true,
+        planning_agent: Some("test_agent".to_string()),
+    });
+
+    let result = engine.run(&wf, json!({"input": "hello"})).await.unwrap();
+    assert_eq!(result.context["result"], "done");
+}
+
+#[tokio::test]
+async fn test_planning_disabled_skips_planner() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+    let call_count = Arc::new(AtomicUsize::new(0));
+    let cc = call_count.clone();
+
+    let engine = make_engine(move |_agent_id, _task, _context, _sp, _model| {
+        cc.fetch_add(1, Ordering::SeqCst);
+        Ok(json!("done"))
+    });
+
+    let mut wf = simple_workflow();
+    wf.planning = Some(PlanningConfig {
+        enabled: false,
+        planning_agent: None,
+    });
+
+    engine.run(&wf, json!({"input": "x"})).await.unwrap();
+    // Only 1 call: the step itself. No planning call.
+    assert_eq!(call_count.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn test_planning_error_fails_workflow() {
+    let engine = make_engine(|_agent_id, _task, _context, _sp, _model| {
+        Err(tavern_core::RuntimeError::RequestFailed {
+            status: 500,
+            body: "planner failed".to_string(),
+        })
+    });
+
+    let mut wf = simple_workflow();
+    wf.planning = Some(PlanningConfig {
+        enabled: true,
+        planning_agent: Some("test_agent".to_string()),
+    });
+
+    let err = engine.run(&wf, json!({"input": "x"})).await.unwrap_err();
+    assert!(matches!(err, CompError::PlanningError { .. }));
 }

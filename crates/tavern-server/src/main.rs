@@ -34,8 +34,7 @@ async fn main() {
     let server_port = std::env::var("SERVER_PORT").unwrap_or_else(|_| "3000".to_string());
 
     let runtime: Arc<dyn Runtime> = Arc::new(
-        tavern_adapters::PandariaRuntime::new(runtime_url)
-            .expect("failed to build HTTP client"),
+        tavern_adapters::PandariaRuntime::new(runtime_url).expect("failed to build HTTP client"),
     );
 
     let hero = TavernHero::new(runtime);
@@ -212,8 +211,9 @@ mod tests {
                     timeout: None,
                     retries: None,
                     retry_delay: None,
-                wait_for_signal: None,
-                signal_timeout: None,
+                    wait_for_signal: None,
+                    signal_timeout: None,
+                    expected_output: None,
                 },
                 tavern_comp::Step {
                     id: "write".to_string(),
@@ -224,8 +224,9 @@ mod tests {
                     timeout: None,
                     retries: None,
                     retry_delay: None,
-                wait_for_signal: None,
-                signal_timeout: None,
+                    wait_for_signal: None,
+                    signal_timeout: None,
+                    expected_output: None,
                 },
                 tavern_comp::Step {
                     id: "edit".to_string(),
@@ -236,8 +237,9 @@ mod tests {
                     timeout: None,
                     retries: None,
                     retry_delay: None,
-                wait_for_signal: None,
-                signal_timeout: None,
+                    wait_for_signal: None,
+                    signal_timeout: None,
+                    expected_output: None,
                 },
             ],
             inputs: vec![tavern_comp::InputDef {
@@ -249,12 +251,14 @@ mod tests {
                 name: "article".to_string(),
                 value: "{{final}}".to_string(),
             }],
+            process: tavern_comp::Process::Sequential,
+            planning: None,
         }
     }
 
     fn create_test_app() -> axum::Router {
         create_test_app_with_workflow(
-            |_agent_id, task, _context| {
+            |_agent_id, task, _context, _sp, _model| {
                 if task.starts_with("research") {
                     Ok(json!("research notes"))
                 } else if task.starts_with("write") {
@@ -472,7 +476,7 @@ mod tests {
 
     fn create_test_app_with_workflow<F>(handler: F, workflow: tavern_comp::Workflow) -> axum::Router
     where
-        F: Fn(&str, &str, Option<Value>) -> Result<Value, tavern_core::RuntimeError>
+        F: Fn(&str, &str, Option<Value>, &str, &str) -> Result<Value, tavern_core::RuntimeError>
             + Send
             + Sync
             + 'static,
@@ -528,13 +532,16 @@ instructions: 研究
                 timeout: None,
                 retries: None,
                 retry_delay: None,
-            wait_for_signal: None,
-            signal_timeout: None,
+                wait_for_signal: None,
+                signal_timeout: None,
+                expected_output: None,
             }],
             inputs: vec![],
             outputs: vec![],
+            process: tavern_comp::Process::Sequential,
+            planning: None,
         };
-        let app = create_test_app_with_workflow(|_, _, _| Ok(json!("ok")), wf);
+        let app = create_test_app_with_workflow(|_, _, _, _, _| Ok(json!("ok")), wf);
         let response = app
             .oneshot(
                 Request::builder()
@@ -564,14 +571,17 @@ instructions: 研究
                 timeout: None,
                 retries: None,
                 retry_delay: None,
-            wait_for_signal: None,
-            signal_timeout: None,
+                wait_for_signal: None,
+                signal_timeout: None,
+                expected_output: None,
             }],
             inputs: vec![],
             outputs: vec![],
+            process: tavern_comp::Process::Sequential,
+            planning: None,
         };
         let app = create_test_app_with_workflow(
-            |_, _, _| {
+            |_, _, _, _, _| {
                 Err(tavern_core::RuntimeError::RequestFailed {
                     status: 500,
                     body: "boom".to_string(),

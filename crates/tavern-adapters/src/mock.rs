@@ -2,7 +2,7 @@ use serde_json::Value;
 use tavern_core::{Runtime, RuntimeError};
 
 type MockHandler =
-    Box<dyn Fn(&str, &str, Option<Value>) -> Result<Value, RuntimeError> + Send + Sync>;
+    Box<dyn Fn(&str, &str, Option<Value>, &str, &str) -> Result<Value, RuntimeError> + Send + Sync>;
 
 pub struct MockRuntime {
     /// 同步闭包，应在立即返回的轻量逻辑中使用。
@@ -13,7 +13,10 @@ pub struct MockRuntime {
 impl MockRuntime {
     pub fn new<F>(handler: F) -> Self
     where
-        F: Fn(&str, &str, Option<Value>) -> Result<Value, RuntimeError> + Send + Sync + 'static,
+        F: Fn(&str, &str, Option<Value>, &str, &str) -> Result<Value, RuntimeError>
+            + Send
+            + Sync
+            + 'static,
     {
         Self {
             handler: Box::new(handler),
@@ -28,7 +31,9 @@ impl Runtime for MockRuntime {
         agent_id: &str,
         task: &str,
         context: Option<Value>,
+        system_prompt: &str,
+        model: &str,
     ) -> Result<Value, RuntimeError> {
-        (self.handler)(agent_id, task, context)
+        (self.handler)(agent_id, task, context, system_prompt, model)
     }
 }

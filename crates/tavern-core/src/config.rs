@@ -100,3 +100,54 @@ pub fn is_valid_id(id: &str) -> bool {
             .bytes()
             .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
 }
+
+// ── Phase 1: CrewAI Alignment 类型 ──
+
+/// 执行策略，存储在 Workflow 上。
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Process {
+    /// 默认：DAG 拓扑排序 + 事件溯源
+    #[default]
+    Sequential,
+    /// Manager Agent 动态委派
+    Hierarchical(ManagerConfig),
+}
+
+/// Hierarchical 模式的 Manager Agent 配置。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ManagerConfig {
+    /// Manager Agent 的 ID（必须在 registry 中注册）
+    pub agent_id: String,
+    /// 可选：覆盖 Manager Agent 的 instructions
+    #[serde(default)]
+    pub instructions: Option<String>,
+}
+
+/// Planning 模式的配置。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PlanningConfig {
+    /// 是否启用 Planning
+    pub enabled: bool,
+    /// AgentPlanner 的 agent_id。None 时回退到 workflow.steps[0].agent_id
+    #[serde(default)]
+    pub planning_agent: Option<String>,
+}
+
+/// AgentPlanner 生成的执行计划。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Plan {
+    pub steps: Vec<PlanStep>,
+    pub overall_strategy: String,
+}
+
+/// Plan 中的单个步骤。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PlanStep {
+    pub task_id: String,
+    pub agent_id: String,
+    pub reasoning: String,
+    pub expected_output: String,
+    #[serde(default)]
+    pub dependencies: Vec<String>,
+}

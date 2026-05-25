@@ -7,8 +7,6 @@ steps:
     agent_id: researcher
     task: "研究以下主题并整理关键信息: {{topic}}"
     output_key: research_notes
-    retries: 1
-    retry_delay: 2
 
   - id: write
     agent_id: writer

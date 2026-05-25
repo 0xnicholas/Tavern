@@ -3,8 +3,8 @@ name: 研究员
 description: 擅长信息检索和资料整理
 
 model:
-  provider: openai
-  name: gpt-4o
+  provider: deepseek
+  name: deepseek-v4-pro
   temperature: 0.3
 
 instructions: |

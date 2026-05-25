@@ -55,7 +55,11 @@ pub fn map_tavern_error(err: &TavernError) -> (StatusCode, ApiError) {
     match err {
         TavernError::AgentNotFound { id } => (
             StatusCode::NOT_FOUND,
-            ApiError::new(StatusCode::NOT_FOUND, "AgentNotFound", format!("Agent '{}' not found", id)),
+            ApiError::new(
+                StatusCode::NOT_FOUND,
+                "AgentNotFound",
+                format!("Agent '{}' not found", id),
+            ),
         ),
         TavernError::DuplicateAgent { .. } => (
             StatusCode::CONFLICT,
@@ -63,7 +67,11 @@ pub fn map_tavern_error(err: &TavernError) -> (StatusCode, ApiError) {
         ),
         TavernError::ConfigParse { .. } | TavernError::Io(_) => (
             StatusCode::INTERNAL_SERVER_ERROR,
-            ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, "InternalError", err.to_string()),
+            ApiError::new(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "InternalError",
+                err.to_string(),
+            ),
         ),
         TavernError::Runtime(runtime_err) => match runtime_err {
             RuntimeError::RequestFailed { .. }
@@ -124,23 +132,43 @@ pub fn map_comp_error(err: CompError) -> (StatusCode, ApiError) {
     match &err {
         CompError::WorkflowNotFound { id } => (
             StatusCode::NOT_FOUND,
-            ApiError::new(StatusCode::NOT_FOUND, "WorkflowNotFound", format!("Workflow '{}' not found", id)),
+            ApiError::new(
+                StatusCode::NOT_FOUND,
+                "WorkflowNotFound",
+                format!("Workflow '{}' not found", id),
+            ),
         ),
         CompError::AgentNotFound { id } => (
             StatusCode::NOT_FOUND,
-            ApiError::new(StatusCode::NOT_FOUND, "AgentNotFound", format!("Agent '{}' not found", id)),
+            ApiError::new(
+                StatusCode::NOT_FOUND,
+                "AgentNotFound",
+                format!("Agent '{}' not found", id),
+            ),
         ),
         CompError::MissingInput { name } => (
             StatusCode::BAD_REQUEST,
-            ApiError::new(StatusCode::BAD_REQUEST, "MissingInput", format!("Missing required input: {}", name)),
+            ApiError::new(
+                StatusCode::BAD_REQUEST,
+                "MissingInput",
+                format!("Missing required input: {}", name),
+            ),
         ),
         CompError::InvalidInputType { got } => (
             StatusCode::BAD_REQUEST,
-            ApiError::new(StatusCode::BAD_REQUEST, "InvalidInputType", format!("Invalid input type: expected JSON object, got {}", got)),
+            ApiError::new(
+                StatusCode::BAD_REQUEST,
+                "InvalidInputType",
+                format!("Invalid input type: expected JSON object, got {}", got),
+            ),
         ),
         CompError::TemplateParse { reason } => (
             StatusCode::BAD_REQUEST,
-            ApiError::new(StatusCode::BAD_REQUEST, "TemplateParse", format!("Template parse error: {}", reason)),
+            ApiError::new(
+                StatusCode::BAD_REQUEST,
+                "TemplateParse",
+                format!("Template parse error: {}", reason),
+            ),
         ),
         CompError::StepFailed { step_id, reason } => (
             StatusCode::BAD_GATEWAY,
@@ -152,24 +180,76 @@ pub fn map_comp_error(err: CompError) -> (StatusCode, ApiError) {
         ),
         CompError::InstanceNotFound { id } => (
             StatusCode::NOT_FOUND,
-            ApiError::new(StatusCode::NOT_FOUND, "InstanceNotFound", format!("Execution '{}' not found", id)),
+            ApiError::new(
+                StatusCode::NOT_FOUND,
+                "InstanceNotFound",
+                format!("Execution '{}' not found", id),
+            ),
         ),
         CompError::InstanceClosed { id } => (
             StatusCode::CONFLICT,
-            ApiError::new(StatusCode::CONFLICT, "InstanceClosed", format!("Execution '{}' is closed", id)),
+            ApiError::new(
+                StatusCode::CONFLICT,
+                "InstanceClosed",
+                format!("Execution '{}' is closed", id),
+            ),
         ),
         CompError::SignalRejected { id, signal } => (
             StatusCode::CONFLICT,
-            ApiError::new(StatusCode::CONFLICT, "SignalRejected", format!("Instance '{}' is not waiting for signal '{}'", id, signal)),
+            ApiError::new(
+                StatusCode::CONFLICT,
+                "SignalRejected",
+                format!("Instance '{}' is not waiting for signal '{}'", id, signal),
+            ),
         ),
         CompError::StoreError(_) => (
             StatusCode::SERVICE_UNAVAILABLE,
-            ApiError::new(StatusCode::SERVICE_UNAVAILABLE, "StoreError", err.to_string()),
+            ApiError::new(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "StoreError",
+                err.to_string(),
+            ),
+        ),
+        CompError::ManagerError { reason } => (
+            StatusCode::BAD_GATEWAY,
+            ApiError::new(
+                StatusCode::BAD_GATEWAY,
+                "ManagerError",
+                format!("Manager agent error: {}", reason),
+            ),
+        ),
+        CompError::ManagerLoopExceeded { max_loops } => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            ApiError::new(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "ManagerLoopExceeded",
+                format!("Manager exceeded {} loops", max_loops),
+            ),
+        ),
+        CompError::PlanningError { reason } => (
+            StatusCode::BAD_GATEWAY,
+            ApiError::new(
+                StatusCode::BAD_GATEWAY,
+                "PlanningError",
+                format!("Planning error: {}", reason),
+            ),
+        ),
+        CompError::PlanningAgentNotRegistered { id } => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            ApiError::new(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "PlanningAgentNotRegistered",
+                format!("Planning agent '{}' not registered", id),
+            ),
         ),
         CompError::Hero(hero_err) => map_tavern_error(hero_err),
         _ => (
             StatusCode::INTERNAL_SERVER_ERROR,
-            ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, "InternalError", err.to_string()),
+            ApiError::new(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "InternalError",
+                err.to_string(),
+            ),
         ),
     }
 }
@@ -284,7 +364,10 @@ pub async fn start_workflow_handler(
         handles.remove(&exec_id);
     });
 
-    Ok((StatusCode::ACCEPTED, Json(StartWorkflowResponse { execution_id })))
+    Ok((
+        StatusCode::ACCEPTED,
+        Json(StartWorkflowResponse { execution_id }),
+    ))
 }
 
 #[derive(Serialize)]
@@ -330,12 +413,15 @@ pub async fn get_execution_handler(
         status: instance_state.status.as_str().to_string(),
         context: instance_state.context,
         outputs: match &instance_state.status {
-            tavern_comp::InstanceStatus::Completed => {
-                events.iter().find_map(|e| match e {
-                    tavern_comp::WorkflowEvent::WorkflowCompleted { outputs, .. } => Some(outputs.clone()),
+            tavern_comp::InstanceStatus::Completed => events
+                .iter()
+                .find_map(|e| match e {
+                    tavern_comp::WorkflowEvent::WorkflowCompleted { outputs, .. } => {
+                        Some(outputs.clone())
+                    }
                     _ => None,
-                }).unwrap_or_default()
-            }
+                })
+                .unwrap_or_default(),
             _ => Value::Object(serde_json::Map::new()),
         },
         step_results: serde_json::to_value(&instance_state.step_results).unwrap_or_default(),
@@ -495,7 +581,10 @@ pub async fn metrics_handler(State(state): State<Arc<AppState>>) -> impl IntoRes
 
     (
         StatusCode::OK,
-        [(axum::http::header::CONTENT_TYPE, "text/plain; version=0.0.4")],
+        [(
+            axum::http::header::CONTENT_TYPE,
+            "text/plain; version=0.0.4",
+        )],
         body,
     )
 }

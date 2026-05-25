@@ -22,12 +22,27 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         .route("/workflows/:id", get(handlers::get_workflow_handler))
         .route("/workflows/:id", delete(handlers::delete_workflow_handler))
         .route("/workflows/:id/run", post(handlers::run_workflow_handler))
-        .route("/workflows/:id/start", post(handlers::start_workflow_handler))
-        .route("/workflows/reload", post(handlers::reload_workflows_handler))
+        .route(
+            "/workflows/:id/start",
+            post(handlers::start_workflow_handler),
+        )
+        .route(
+            "/workflows/reload",
+            post(handlers::reload_workflows_handler),
+        )
         .route("/executions/:id", get(handlers::get_execution_handler))
-        .route("/executions/:id/events", get(handlers::get_execution_events_handler))
-        .route("/executions/:id/signal", post(handlers::signal_execution_handler))
-        .route("/executions/:id/cancel", post(handlers::cancel_execution_handler))
+        .route(
+            "/executions/:id/events",
+            get(handlers::get_execution_events_handler),
+        )
+        .route(
+            "/executions/:id/signal",
+            post(handlers::signal_execution_handler),
+        )
+        .route(
+            "/executions/:id/cancel",
+            post(handlers::cancel_execution_handler),
+        )
         .route("/metrics", get(handlers::metrics_handler))
         .layer(DefaultBodyLimit::max(MAX_BODY_SIZE))
         .layer(TraceLayer::new_for_http())

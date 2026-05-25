@@ -2,15 +2,17 @@ use std::collections::HashMap;
 use std::path::Path;
 
 use chrono::{DateTime, Utc};
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value;
 
 use crate::error::CompError;
 
-pub use tavern_core::is_valid_id;
+pub use tavern_core::{is_valid_id, ManagerConfig, Plan, PlanningConfig, Process};
 
 /// 工作流的完整配置定义。
-#[derive(Debug, Clone, Deserialize, Serialize)]
+///
+/// 自定义反序列化以支持 `process: hierarchical` + `manager:` YAML 双 key 语法。
+#[derive(Debug, Clone, Serialize)]
 pub struct Workflow {
     /// 全局唯一标识符
     /// 约束：^[a-zA-Z0-9_-]+$，长度 1-64
@@ -35,6 +37,72 @@ pub struct Workflow {
     /// 默认：空列表（REST 响应中 outputs 字段为空对象 {}）
     #[serde(default)]
     pub outputs: Vec<OutputDef>,
+
+    /// 执行策略
+    /// YAML 缺失时默认 Sequential
+    #[serde(default)]
+    pub process: Process,
+
+    /// Planning 配置
+    /// YAML 缺失时默认 None（不启用 Planning）
+    #[serde(default)]
+    pub planning: Option<PlanningConfig>,
+}
+
+impl<'de> Deserialize<'de> for Workflow {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        struct Helper {
+            id: String,
+            name: String,
+            #[serde(default)]
+            description: Option<String>,
+            steps: Vec<Step>,
+            #[serde(default)]
+            inputs: Vec<InputDef>,
+            #[serde(default)]
+            outputs: Vec<OutputDef>,
+            #[serde(default)]
+            process: Option<String>,
+            #[serde(default)]
+            manager: Option<ManagerConfig>,
+            #[serde(default)]
+            planning: Option<PlanningConfig>,
+        }
+
+        let h = Helper::deserialize(deserializer)?;
+        let process = match h.process.as_deref() {
+            None | Some("sequential") => Process::Sequential,
+            Some("hierarchical") => {
+                let cfg = h.manager.ok_or_else(|| {
+                    serde::de::Error::custom(
+                        "process is 'hierarchical' but 'manager' section is missing",
+                    )
+                })?;
+                Process::Hierarchical(cfg)
+            }
+            Some(other) => {
+                return Err(serde::de::Error::custom(format!(
+                    "unknown process type: '{}', expected 'sequential' or 'hierarchical'",
+                    other
+                )));
+            }
+        };
+
+        Ok(Workflow {
+            id: h.id,
+            name: h.name,
+            description: h.description,
+            steps: h.steps,
+            inputs: h.inputs,
+            outputs: h.outputs,
+            process,
+            planning: h.planning,
+        })
+    }
 }
 
 impl Workflow {
@@ -57,8 +125,10 @@ impl Workflow {
 
     /// 静态校验（不依赖 Hero）。
     /// 检查：Workflow.id 格式、Step.id 唯一性、依赖存在性、DAG 无环、output_key 唯一性、资源上限。
+    /// Hierarchical 模式跳过 DAG 校验，使用独立的步骤数限制。
     pub fn validate_static(&self) -> Result<(), CompError> {
         const MAX_STEPS: usize = 100;
+        const MAX_HIERARCHICAL_TASKS: usize = 50;
         const MAX_INPUTS: usize = 50;
         const MAX_OUTPUTS: usize = 50;
         const MAX_STEP_TASK_LEN: usize = 10_000;
@@ -81,10 +151,16 @@ impl Workflow {
                 reason: "workflow must have at least one step".to_string(),
             });
         }
-        if self.steps.len() > MAX_STEPS {
+
+        // Process-aware step count limit
+        let max_allowed = match &self.process {
+            Process::Sequential => MAX_STEPS,
+            Process::Hierarchical(_) => MAX_HIERARCHICAL_TASKS,
+        };
+        if self.steps.len() > max_allowed {
             return Err(CompError::ConfigParse {
                 path: "<workflow>".to_string(),
-                reason: format!("workflow steps exceed limit of {}", MAX_STEPS),
+                reason: format!("workflow steps exceed limit of {}", max_allowed),
             });
         }
 
@@ -155,8 +231,31 @@ impl Workflow {
             }
         }
 
-        // 5. depends_on 存在性 + DAG 无环（由 validator 统一处理）
-        crate::validator::validate_dag(self)?;
+        // 5. depends_on 存在性 + DAG 无环（Sequential 模式）或跳过（Hierarchical 模式）
+        match &self.process {
+            Process::Sequential => {
+                crate::validator::validate_dag(self)?;
+            }
+            Process::Hierarchical(cfg) => {
+                // 跳过 DAG 校验，仅校验 manager agent_id 格式
+                if !is_valid_id(&cfg.agent_id) {
+                    return Err(CompError::ConfigParse {
+                        path: "<workflow>".to_string(),
+                        reason: format!("invalid manager agent_id '{}'", cfg.agent_id),
+                    });
+                }
+                // depends_on 存在性仍需校验（YAML 可能拼错 step id）
+                let step_ids: std::collections::HashSet<&str> =
+                    self.steps.iter().map(|s| s.id.as_str()).collect();
+                for step in &self.steps {
+                    for dep in &step.depends_on {
+                        if !step_ids.contains(dep.as_str()) {
+                            return Err(CompError::StepNotFound { id: dep.clone() });
+                        }
+                    }
+                }
+            }
+        }
 
         // 6. output_key 唯一性（非空字符串）+ 长度限制
         let mut output_keys = std::collections::HashSet::new();
@@ -233,6 +332,11 @@ pub struct Step {
     /// 默认：null（无超时，永久等待）
     #[serde(default)]
     pub signal_timeout: Option<u64>,
+
+    /// 可选的预期输出描述，帮助 LLM 理解任务目标。
+    /// 在 Manager prompt 和 Planning Context 注入时使用。
+    #[serde(default)]
+    pub expected_output: Option<String>,
 }
 
 /// 外部输入参数定义。
@@ -259,10 +363,6 @@ fn default_attempt() -> u64 {
     1
 }
 
-fn default_empty_object() -> Value {
-    Value::Object(serde_json::Map::new())
-}
-
 /// 工作流最终输出的定义。
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct OutputDef {
@@ -280,7 +380,6 @@ pub struct WorkflowResult {
     pub context: Value,
 
     /// 工作流最终输出（由 `OutputDef` 模板渲染）
-    #[serde(default = "default_empty_object")]
     pub outputs: Value,
 
     /// 每个步骤的详细执行结果
@@ -415,5 +514,59 @@ name: y
         };
         let json_str = serde_json::to_string(&result).unwrap();
         assert!(json_str.contains("Completed"));
+    }
+
+    // ── Phase 1: CrewAI Alignment 新字段测试 ──
+
+    #[test]
+    fn test_workflow_default_process_is_sequential() {
+        let yaml = r#"
+id: minimal
+name: 最小工作流
+steps:
+  - id: s1
+    agent_id: a1
+    task: do something
+"#;
+        let workflow: Workflow = serde_yaml::from_str(yaml).unwrap();
+        assert!(matches!(workflow.process, Process::Sequential));
+        assert!(workflow.planning.is_none());
+    }
+
+    #[test]
+    fn test_step_expected_output_default() {
+        let step: Step = serde_yaml::from_str("id: s1\nagent_id: a1\ntask: do something").unwrap();
+        assert_eq!(step.expected_output, None);
+    }
+
+    #[test]
+    fn test_step_expected_output_some() {
+        let yaml = r#"
+id: s1
+agent_id: a1
+task: do something
+expected_output: "A research report"
+"#;
+        let step: Step = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(step.expected_output.as_deref(), Some("A research report"));
+    }
+
+    #[test]
+    fn test_workflow_with_planning() {
+        let yaml = r#"
+id: complex
+name: Complex
+steps:
+  - id: s1
+    agent_id: a1
+    task: do something
+planning:
+  enabled: true
+  planning_agent: "planner"
+"#;
+        let workflow: Workflow = serde_yaml::from_str(yaml).unwrap();
+        let planning = workflow.planning.unwrap();
+        assert!(planning.enabled);
+        assert_eq!(planning.planning_agent.as_deref(), Some("planner"));
     }
 }

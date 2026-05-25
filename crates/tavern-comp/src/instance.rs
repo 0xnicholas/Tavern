@@ -36,20 +36,19 @@ pub struct InstanceState {
     pub pending_timers: HashMap<String, DateTime<Utc>>,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub enum InstanceStatus {
+    #[default]
     Pending,
     Running,
-    WaitingForSignal { signal: String },
-    Sleeping { wake_at: DateTime<Utc> },
+    WaitingForSignal {
+        signal: String,
+    },
+    Sleeping {
+        wake_at: DateTime<Utc>,
+    },
     Completed,
     Failed,
-}
-
-impl Default for InstanceStatus {
-    fn default() -> Self {
-        InstanceStatus::Pending
-    }
 }
 
 impl InstanceStatus {
@@ -69,7 +68,10 @@ impl InstanceState {
     /// 应用单个事件到状态。无副作用，可安全重放。
     pub fn apply(&mut self, event: &WorkflowEvent) -> Result<(), CompError> {
         match event {
-            WorkflowEvent::InstanceCreated { workflow_id, inputs } => {
+            WorkflowEvent::InstanceCreated {
+                workflow_id,
+                inputs,
+            } => {
                 self.workflow_id = workflow_id.clone();
                 self.context = inputs.clone();
                 self.status = InstanceStatus::Pending;
@@ -80,7 +82,10 @@ impl InstanceState {
             WorkflowEvent::StepScheduled { step_id, .. } => {
                 self.scheduled_steps.insert(step_id.clone());
             }
-            WorkflowEvent::StepStarted { step_id, started_at } => {
+            WorkflowEvent::StepStarted {
+                step_id,
+                started_at,
+            } => {
                 if self.running_steps.contains(step_id) {
                     tracing::warn!(step_id = %step_id, "StepStarted for already-running step");
                 }
@@ -124,7 +129,10 @@ impl InstanceState {
                     },
                 );
             }
-            WorkflowEvent::SignalWaitStarted { step_id, signal_name } => {
+            WorkflowEvent::SignalWaitStarted {
+                step_id,
+                signal_name,
+            } => {
                 self.signal_blocked_steps.insert(step_id.clone());
                 self.status = InstanceStatus::WaitingForSignal {
                     signal: signal_name.clone(),
@@ -153,7 +161,11 @@ impl InstanceState {
                     },
                 );
             }
-            WorkflowEvent::SignalReceived { signal_name, payload, .. } => {
+            WorkflowEvent::SignalReceived {
+                signal_name,
+                payload,
+                ..
+            } => {
                 let expected = matches!(
                     self.status,
                     InstanceStatus::WaitingForSignal { ref signal } if signal == signal_name

@@ -21,7 +21,11 @@ pub trait EventStore: Send + Sync {
     }
 
     /// 保存状态快照（可选优化）
-    async fn save_snapshot(&self, instance_id: &str, state: &InstanceState) -> Result<(), CompError>;
+    async fn save_snapshot(
+        &self,
+        instance_id: &str,
+        state: &InstanceState,
+    ) -> Result<(), CompError>;
     async fn load_snapshot(&self, instance_id: &str) -> Result<Option<InstanceState>, CompError>;
 }
 
@@ -79,7 +83,11 @@ impl EventStore for MemoryEventStore {
         Ok(result)
     }
 
-    async fn save_snapshot(&self, instance_id: &str, state: &InstanceState) -> Result<(), CompError> {
+    async fn save_snapshot(
+        &self,
+        instance_id: &str,
+        state: &InstanceState,
+    ) -> Result<(), CompError> {
         let mut snapshots = self.snapshots.write().await;
         snapshots.insert(instance_id.to_string(), state.clone());
         Ok(())

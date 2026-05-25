@@ -94,7 +94,7 @@ fn is_yaml_ext(ext: &std::ffi::OsStr) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::workflow::Step;
+    use crate::workflow::{Process, Step};
 
     fn make_workflow(id: &str) -> Workflow {
         Workflow {
@@ -110,11 +110,14 @@ mod tests {
                 timeout: None,
                 retries: None,
                 retry_delay: None,
-            wait_for_signal: None,
-            signal_timeout: None,
+                wait_for_signal: None,
+                signal_timeout: None,
+                expected_output: None,
             }],
             inputs: vec![],
             outputs: vec![],
+            process: Process::Sequential,
+            planning: None,
         }
     }
 

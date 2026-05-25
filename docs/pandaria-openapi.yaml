@@ -1,0 +1,1190 @@
+openapi: 3.0.3
+info:
+  title: Pandaria API
+  description: |
+    Pandaria 服务端 HTTP 入口层。提供 REST API + SSE 事件流，对接 TUI 客户端。
+    职责：认证、路由、SSE 事件转发、限流。
+  version: 1.0.0
+servers:
+  - url: http://localhost:8080
+    description: Local development server
+paths:
+  /healthz:
+    get:
+      summary: Health check
+      operationId: healthCheck
+      security: []
+      responses:
+        '200':
+          description: Service is healthy
+
+  /api/v1/sessions:
+    post:
+      summary: Create a new session
+      operationId: createSession
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateSessionRequest'
+      responses:
+        '201':
+          description: Session created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SessionInfo'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+
+    get:
+      summary: List all sessions for the tenant
+      operationId: listSessions
+      responses:
+        '200':
+          description: List of sessions
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/SessionInfo'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+
+  /api/v1/sessions/{id}:
+    get:
+      summary: Get session metadata
+      operationId: getSession
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Session metadata
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SessionInfo'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+
+    patch:
+      summary: Update session metadata (partial)
+      operationId: updateSession
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateSessionRequest'
+      responses:
+        '200':
+          description: Updated session metadata
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SessionInfo'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+
+    delete:
+      summary: Delete a session
+      operationId: deleteSession
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '204':
+          description: Session deleted
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+
+  /api/v1/sessions/{id}/messages:
+    get:
+      summary: Get session message history
+      operationId: getSessionMessages
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Message history
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/AgentMessage'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+
+    post:
+      summary: Send a message to a session
+      operationId: sendMessage
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: wait
+          in: query
+          required: false
+          schema:
+            type: boolean
+            default: false
+        - name: timeout_ms
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 30000
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SendMessageRequest'
+      responses:
+        '200':
+          description: Turn complete (wait=true) or accepted (wait=false)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WaitResult'
+        '202':
+          description: Message accepted (async) or turn in progress (wait=true timeout)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SendMessageResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+
+  /api/v1/sessions/{id}/messages/current:
+    delete:
+      summary: Interrupt the current in-flight turn
+      operationId: interruptTurn
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '204':
+          description: Turn interrupted
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+
+  /api/v1/sessions/{id}/events:
+    get:
+      summary: Subscribe to SSE event stream
+      operationId: subscribeEvents
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: SSE stream
+          content:
+            text/event-stream:
+              schema:
+                $ref: '#/components/schemas/ServerEvent'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+
+  /api/v1/sessions/{id}/compact:
+    post:
+      summary: Trigger session context compaction
+      operationId: compactSession
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '202':
+          description: Compaction triggered
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+
+  /api/v1/sessions/{id}/state:
+    get:
+      summary: Get session state
+      operationId: getSessionState
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Session state
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SessionStateResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+
+  /api/v1/sessions/{id}/clone:
+    post:
+      summary: Clone a session (copy config, not history)
+      operationId: cloneSession
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                title:
+                  type: string
+      responses:
+        '201':
+          description: Session cloned
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SessionInfo'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+
+  /api/v1/sessions/{id}/reset:
+    post:
+      summary: Reset a session (clear history, keep config)
+      operationId: resetSession
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Session reset
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResetSessionResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+
+  /api/v1/sessions/batch:
+    post:
+      summary: Batch create sessions
+      operationId: batchCreateSessions
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BatchCreateRequest'
+      responses:
+        '201':
+          description: Sessions created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BatchCreateResult'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+
+  /api/v1/tenant/quota:
+    get:
+      summary: Get tenant quota information
+      operationId: getTenantQuota
+      responses:
+        '200':
+          description: Quota information
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QuotaInfo'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/v1/sessions/{id}/ws:
+    get:
+      summary: WebSocket connection for session events
+      operationId: sessionWebSocket
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '101':
+          description: WebSocket upgrade successful
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      description: |
+        HMAC-SHA256 signed compact token.
+        Format: `<base64url(payload)>.<base64url(signature)>`
+        Payload: `{"tenant_id": "...", "iat": 1714608000}`
+
+  schemas:
+    SessionInfo:
+      type: object
+      required:
+        - id
+        - model
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: Session UUID (serialized as string for TUI compatibility)
+        title:
+          type: string
+          nullable: true
+        model:
+          type: string
+          description: LLM model identifier
+        context_window:
+          type: integer
+          format: int64
+          nullable: true
+          description: Context window size (filled from ServerConfig if not returned by tenant)
+        created_at:
+          type: string
+          nullable: true
+
+    CreateSessionRequest:
+      type: object
+      properties:
+        title:
+          type: string
+          nullable: true
+        system_prompt:
+          type: string
+          nullable: true
+        tools:
+          type: array
+          items:
+            $ref: '#/components/schemas/ToolConfig'
+          default: []
+        webhook:
+          $ref: '#/components/schemas/WebhookConfig'
+
+    UpdateSessionRequest:
+      type: object
+      properties:
+        title:
+          type: string
+        model:
+          type: string
+        system_prompt:
+          type: string
+
+    SendMessageRequest:
+      type: object
+      required:
+        - content
+      properties:
+        content:
+          type: array
+          description: User message content parts (text, image, video, audio)
+          items:
+            $ref: '#/components/schemas/MessageContentPart'
+
+    SendMessageResponse:
+      type: object
+      required:
+        - turn_index
+      properties:
+        turn_index:
+          type: integer
+          format: int64
+
+    MessageContentPart:
+      type: object
+      required:
+        - type
+      discriminator:
+        propertyName: type
+      oneOf:
+        - $ref: '#/components/schemas/TextContentPart'
+        - $ref: '#/components/schemas/ImageContentPart'
+        - $ref: '#/components/schemas/VideoContentPart'
+        - $ref: '#/components/schemas/AudioContentPart'
+
+    TextContentPart:
+      type: object
+      required: [type, text]
+      properties:
+        type:
+          type: string
+          enum: [text]
+        text:
+          type: string
+
+    ImageContentPart:
+      type: object
+      required: [type, data, mime_type]
+      properties:
+        type:
+          type: string
+          enum: [image]
+        data:
+          type: string
+        mime_type:
+          type: string
+
+    VideoContentPart:
+      type: object
+      required: [type, data, mime_type]
+      properties:
+        type:
+          type: string
+          enum: [video]
+        data:
+          type: string
+        mime_type:
+          type: string
+
+    AudioContentPart:
+      type: object
+      required: [type, data, mime_type]
+      properties:
+        type:
+          type: string
+          enum: [audio]
+        data:
+          type: string
+        mime_type:
+          type: string
+
+    ServerEvent:
+      type: object
+      required:
+        - type
+      properties:
+        type:
+          type: string
+          enum:
+            - message_start
+            - text_delta
+            - thinking_delta
+            - tool_call_started
+            - tool_call_delta
+            - tool_call_done
+            - turn_end
+            - error
+            - state_changed
+            - auto_retry_start
+            - auto_retry_end
+      description: |
+        SSE event types. Events are serialized as:
+        ```
+        event: <type>
+        data: <json>
+        ```
+      discriminator:
+        propertyName: type
+      oneOf:
+        - $ref: '#/components/schemas/MessageStartEvent'
+        - $ref: '#/components/schemas/TextDeltaEvent'
+        - $ref: '#/components/schemas/ThinkingDeltaEvent'
+        - $ref: '#/components/schemas/ToolCallStartedEvent'
+        - $ref: '#/components/schemas/ToolCallDeltaEvent'
+        - $ref: '#/components/schemas/ToolCallDoneEvent'
+        - $ref: '#/components/schemas/TurnEndEvent'
+        - $ref: '#/components/schemas/ErrorEvent'
+        - $ref: '#/components/schemas/StateChangedEvent'
+        - $ref: '#/components/schemas/AutoRetryStartEvent'
+        - $ref: '#/components/schemas/AutoRetryEndEvent'
+
+    MessageStartEvent:
+      type: object
+      required:
+        - type
+        - message_index
+      properties:
+        type:
+          type: string
+          enum: [message_start]
+        message_index:
+          type: integer
+          format: int64
+
+    TextDeltaEvent:
+      type: object
+      required:
+        - type
+        - delta
+      properties:
+        type:
+          type: string
+          enum: [text_delta]
+        delta:
+          type: string
+
+    ThinkingDeltaEvent:
+      type: object
+      required:
+        - type
+        - content_index
+        - delta
+      properties:
+        type:
+          type: string
+          enum: [thinking_delta]
+        content_index:
+          type: integer
+          format: int64
+        delta:
+          type: string
+
+    ToolCallStartedEvent:
+      type: object
+      required:
+        - type
+        - call_id
+        - name
+      properties:
+        type:
+          type: string
+          enum: [tool_call_started]
+        call_id:
+          type: string
+        name:
+          type: string
+
+    ToolCallDeltaEvent:
+      type: object
+      required:
+        - type
+        - call_id
+        - delta
+      properties:
+        type:
+          type: string
+          enum: [tool_call_delta]
+        call_id:
+          type: string
+        delta:
+          type: string
+
+    ToolCallDoneEvent:
+      type: object
+      required:
+        - type
+        - call_id
+      properties:
+        type:
+          type: string
+          enum: [tool_call_done]
+        call_id:
+          type: string
+        result:
+          type: string
+          nullable: true
+          description: Concatenated text content from tool result
+        is_error:
+          type: boolean
+          default: false
+
+    TurnEndEvent:
+      type: object
+      required:
+        - type
+        - stop_reason
+      properties:
+        type:
+          type: string
+          enum: [turn_end]
+        stop_reason:
+          type: string
+        usage:
+          $ref: '#/components/schemas/UsageInfo'
+
+    UsageInfo:
+      type: object
+      properties:
+        input_tokens:
+          type: integer
+          format: int64
+          default: 0
+        output_tokens:
+          type: integer
+          format: int64
+          default: 0
+
+    ErrorEvent:
+      type: object
+      required:
+        - type
+        - code
+        - message
+      properties:
+        type:
+          type: string
+          enum: [error]
+        code:
+          type: string
+        message:
+          type: string
+
+    StateChangedEvent:
+      type: object
+      required:
+        - type
+        - state
+      properties:
+        type:
+          type: string
+          enum: [state_changed]
+        state:
+          type: string
+          enum: [idle, running, error]
+
+    AutoRetryStartEvent:
+      type: object
+      required:
+        - type
+        - attempt
+        - max_attempts
+        - delay_ms
+      properties:
+        type:
+          type: string
+          enum: [auto_retry_start]
+        attempt:
+          type: integer
+        max_attempts:
+          type: integer
+        delay_ms:
+          type: integer
+
+    AutoRetryEndEvent:
+      type: object
+      required:
+        - type
+        - success
+      properties:
+        type:
+          type: string
+          enum: [auto_retry_end]
+        success:
+          type: boolean
+        error:
+          type: string
+          nullable: true
+
+    ApiError:
+      type: object
+      required:
+        - code
+        - message
+      properties:
+        code:
+          type: string
+        message:
+          type: string
+
+    ErrorBody:
+      type: object
+      required:
+        - error
+      properties:
+        error:
+          $ref: '#/components/schemas/ApiError'
+
+    AgentMessage:
+      type: object
+      description: Agent message (user / assistant / toolResult)
+      required:
+        - role
+      discriminator:
+        propertyName: role
+      oneOf:
+        - $ref: '#/components/schemas/UserMessage'
+        - $ref: '#/components/schemas/AssistantMessage'
+        - $ref: '#/components/schemas/ToolResultMessage'
+
+    UserMessage:
+      type: object
+      required:
+        - role
+        - content
+      properties:
+        role:
+          type: string
+          enum: [user]
+        content:
+          type: array
+          items:
+            $ref: '#/components/schemas/Content'
+
+    AssistantMessage:
+      type: object
+      required:
+        - role
+        - content
+        - provider
+        - api
+        - model
+        - usage
+        - stop_reason
+      properties:
+        role:
+          type: string
+          enum: [assistant]
+        content:
+          type: array
+          items:
+            $ref: '#/components/schemas/Content'
+        provider:
+          type: string
+        api:
+          $ref: '#/components/schemas/Api'
+        model:
+          type: string
+        usage:
+          $ref: '#/components/schemas/UsageInfo'
+        stop_reason:
+          type: string
+          enum: [stop, length, tool_use, error, aborted]
+        response_id:
+          type: string
+        error_message:
+          type: string
+
+    ToolResultMessage:
+      type: object
+      required:
+        - role
+        - tool_call_id
+        - tool_name
+        - content
+      properties:
+        role:
+          type: string
+          enum: [toolResult]
+        tool_call_id:
+          type: string
+        tool_name:
+          type: string
+        content:
+          type: array
+          items:
+            $ref: '#/components/schemas/Content'
+        details:
+          type: object
+        is_error:
+          type: boolean
+          default: false
+
+    Content:
+      type: object
+      required:
+        - type
+      discriminator:
+        propertyName: type
+      oneOf:
+        - $ref: '#/components/schemas/TextContent'
+        - $ref: '#/components/schemas/ImageContent'
+        - $ref: '#/components/schemas/ThinkingContent'
+        - $ref: '#/components/schemas/ToolCallContent'
+
+    TextContent:
+      type: object
+      required:
+        - type
+        - text
+      properties:
+        type:
+          type: string
+          enum: [text]
+        text:
+          type: string
+        text_signature:
+          type: string
+
+    ImageContent:
+      type: object
+      required:
+        - type
+        - data
+        - mime_type
+      properties:
+        type:
+          type: string
+          enum: [image]
+        data:
+          type: string
+        mime_type:
+          type: string
+
+    ThinkingContent:
+      type: object
+      required:
+        - type
+        - thinking
+      properties:
+        type:
+          type: string
+          enum: [thinking]
+        thinking:
+          type: string
+        thinking_signature:
+          type: string
+        redacted:
+          type: boolean
+          default: false
+
+    ToolCallContent:
+      type: object
+      required:
+        - type
+        - id
+        - name
+        - arguments
+      properties:
+        type:
+          type: string
+          enum: [toolCall]
+        id:
+          type: string
+        name:
+          type: string
+        arguments:
+          type: object
+        thought_signature:
+          type: string
+
+    Api:
+      type: object
+      required:
+        - provider
+        - model
+      properties:
+        provider:
+          type: string
+        model:
+          type: string
+
+    ToolConfig:
+      type: object
+      required:
+        - name
+        - description
+        - parameters
+        - endpoint
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+        parameters:
+          type: object
+        endpoint:
+          type: string
+          format: uri
+        timeout_ms:
+          type: integer
+        headers:
+          type: object
+          additionalProperties:
+            type: string
+
+    WebhookConfig:
+      type: object
+      required:
+        - url
+      properties:
+        url:
+          type: string
+          format: uri
+        events:
+          type: array
+          items:
+            type: string
+        secret:
+          type: string
+
+    SessionStateResponse:
+      type: object
+      required:
+        - state
+      properties:
+        state:
+          type: string
+          enum: [idle, running, error]
+        error_reason:
+          type: string
+          nullable: true
+
+    QuotaInfo:
+      type: object
+      required:
+        - tenant_id
+        - max_concurrent_sessions
+        - active_sessions
+        - max_tokens_per_day
+        - tokens_used_today
+        - max_tool_calls_per_minute
+        - tool_calls_in_last_minute
+        - default_model
+        - available_models
+      properties:
+        tenant_id:
+          type: string
+        max_concurrent_sessions:
+          type: integer
+        active_sessions:
+          type: integer
+        max_tokens_per_day:
+          type: integer
+        tokens_used_today:
+          type: integer
+        max_tool_calls_per_minute:
+          type: integer
+        tool_calls_in_last_minute:
+          type: integer
+        default_model:
+          type: string
+        available_models:
+          type: array
+          items:
+            type: string
+
+    BatchCreateRequest:
+      type: object
+      required:
+        - count
+        - template
+      properties:
+        count:
+          type: integer
+        template:
+          $ref: '#/components/schemas/CreateSessionRequest'
+
+    BatchCreateResult:
+      type: object
+      required:
+        - created
+        - failed
+      properties:
+        created:
+          type: array
+          items:
+            $ref: '#/components/schemas/SessionInfo'
+        failed:
+          type: array
+          items:
+            $ref: '#/components/schemas/BatchFailure'
+
+    BatchFailure:
+      type: object
+      required:
+        - reason
+      properties:
+        reason:
+          type: string
+
+    WaitResult:
+      type: object
+      required:
+        - turn_index
+        - completed
+      properties:
+        turn_index:
+          type: integer
+        completed:
+          type: boolean
+        messages:
+          type: array
+          items:
+            $ref: '#/components/schemas/AgentMessage'
+        usage:
+          type: object
+          properties:
+            input_tokens:
+              type: integer
+            output_tokens:
+              type: integer
+
+    ResetSessionResponse:
+      type: object
+      required:
+        - state
+      properties:
+        state:
+          type: string
+          enum: [idle]
+
+  responses:
+    Unauthorized:
+      description: Invalid or missing authentication token
+      headers:
+        WWW-Authenticate:
+          schema:
+            type: string
+          description: Bearer
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorBody'
+          example:
+            error:
+              code: unauthorized
+              message: invalid or missing token
+
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorBody'
+          example:
+            error:
+              code: not_found
+              message: session not found
+
+    BadRequest:
+      description: Bad request
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorBody'
+          example:
+            error:
+              code: bad_request
+              message: invalid request parameter
+
+    Conflict:
+      description: Session is in error state and must be reset
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorBody'
+          example:
+            error:
+              code: session_in_error
+              message: session in error state
+
+    RateLimited:
+      description: Rate limit exceeded
+      headers:
+        Retry-After:
+          schema:
+            type: string
+          description: Seconds to wait before retrying
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorBody'
+          example:
+            error:
+              code: rate_limited
+              message: rate limit exceeded
+
+security:
+  - BearerAuth: []

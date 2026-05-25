@@ -24,9 +24,7 @@ impl StepExecutor {
         Self {
             hero,
             tx,
-            semaphore: Arc::new(tokio::sync::Semaphore::new(
-                max_concurrency.min(65536),
-            )),
+            semaphore: Arc::new(tokio::sync::Semaphore::new(max_concurrency.min(65536))),
         }
     }
 

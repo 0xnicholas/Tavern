@@ -1,7 +1,10 @@
 pub mod config;
 pub mod runtime;
 
-pub use config::{is_valid_id, AgentConfig, AgentSummary, MemoryConfig, ModelConfig, SkillConfig};
+pub use config::{
+    is_valid_id, AgentConfig, AgentSummary, ManagerConfig, MemoryConfig, ModelConfig, Plan,
+    PlanStep, PlanningConfig, Process, SkillConfig,
+};
 pub use runtime::{Runtime, RuntimeError};
 
 #[cfg(test)]
@@ -96,5 +99,83 @@ instructions: 写作
 
         let err2 = RuntimeError::InvalidResponse("bad json".to_string());
         assert!(format!("{}", err2).contains("bad json"));
+    }
+
+    // ── Phase 1: CrewAI Alignment 新类型测试 ──
+
+    #[test]
+    fn test_process_default_is_sequential() {
+        let process = Process::default();
+        assert!(matches!(process, Process::Sequential));
+    }
+
+    #[test]
+    fn test_process_sequential_deserialize_from_yaml() {
+        let yaml = "sequential";
+        let process: Process = serde_yaml::from_str(yaml).unwrap();
+        assert!(matches!(process, Process::Sequential));
+    }
+
+    #[test]
+    fn test_manager_config_deserialize() {
+        let yaml = r#"
+agent_id: manager
+instructions: "You are a project manager."
+"#;
+        let config: ManagerConfig = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(config.agent_id, "manager");
+        assert_eq!(
+            config.instructions.as_deref(),
+            Some("You are a project manager.")
+        );
+    }
+
+    #[test]
+    fn test_manager_config_defaults() {
+        let yaml = r#"agent_id: manager"#;
+        let config: ManagerConfig = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(config.agent_id, "manager");
+        assert_eq!(config.instructions, None);
+    }
+
+    #[test]
+    fn test_planning_config_deserialize() {
+        let yaml = r#"
+enabled: true
+planning_agent: "planner"
+"#;
+        let config: PlanningConfig = serde_yaml::from_str(yaml).unwrap();
+        assert!(config.enabled);
+        assert_eq!(config.planning_agent.as_deref(), Some("planner"));
+    }
+
+    #[test]
+    fn test_planning_config_defaults() {
+        let yaml = "enabled: false";
+        let config: PlanningConfig = serde_yaml::from_str(yaml).unwrap();
+        assert!(!config.enabled);
+        assert_eq!(config.planning_agent, None);
+    }
+
+    #[test]
+    fn test_plan_deserialize() {
+        let json = r#"{
+  "overall_strategy": "Research first, then write.",
+  "steps": [
+    {
+      "task_id": "research",
+      "agent_id": "researcher",
+      "reasoning": "Need information first",
+      "expected_output": "A research report",
+      "dependencies": []
+    }
+  ]
+}"#;
+        let plan: Plan = serde_json::from_str(json).unwrap();
+        assert_eq!(plan.overall_strategy, "Research first, then write.");
+        assert_eq!(plan.steps.len(), 1);
+        assert_eq!(plan.steps[0].task_id, "research");
+        assert_eq!(plan.steps[0].agent_id, "researcher");
+        assert_eq!(plan.steps[0].dependencies.len(), 0);
     }
 }

@@ -41,7 +41,9 @@ impl ExecutionHandle {
             rx.await
                 .map_err(|_| CompError::Internal("completion channel closed".into()))?
         } else {
-            Err(CompError::Internal("await_completion already called".into()))
+            Err(CompError::Internal(
+                "await_completion already called".into(),
+            ))
         }
     }
 

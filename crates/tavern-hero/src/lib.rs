@@ -151,9 +151,9 @@ instructions: test
 
     #[tokio::test]
     async fn test_hero_execute_success() {
-        let runtime = Arc::new(MockRuntime::new(|_agent_id, _task, _context| {
-            Ok(json!({"result": "ok"}))
-        }));
+        let runtime = Arc::new(MockRuntime::new(
+            |_agent_id, _task, _context, _sp, _model| Ok(json!({"result": "ok"})),
+        ));
         let hero = TavernHero::new(runtime);
 
         let dir = tempfile::tempdir().unwrap();
@@ -178,9 +178,9 @@ instructions: 研究
 
     #[tokio::test]
     async fn test_hero_execute_agent_not_found() {
-        let runtime = Arc::new(MockRuntime::new(|_agent_id, _task, _context| {
-            Ok(json!({"result": "ok"}))
-        }));
+        let runtime = Arc::new(MockRuntime::new(
+            |_agent_id, _task, _context, _sp, _model| Ok(json!({"result": "ok"})),
+        ));
         let hero = TavernHero::new(runtime);
 
         let err = hero.execute("unknown", "task", None).await.unwrap_err();
@@ -189,7 +189,9 @@ instructions: 研究
 
     #[tokio::test]
     async fn test_hero_load_from_dir() {
-        let runtime = Arc::new(MockRuntime::new(|_agent_id, _task, _context| Ok(json!({}))));
+        let runtime = Arc::new(MockRuntime::new(
+            |_agent_id, _task, _context, _sp, _model| Ok(json!({})),
+        ));
         let hero = TavernHero::new(runtime);
 
         let dir = tempfile::tempdir().unwrap();
@@ -215,9 +217,9 @@ instructions: test
 
     #[tokio::test]
     async fn test_hero_concurrent_load_and_execute() {
-        let runtime = Arc::new(MockRuntime::new(|_agent_id, _task, _context| {
-            Ok(json!({"result": "ok"}))
-        }));
+        let runtime = Arc::new(MockRuntime::new(
+            |_agent_id, _task, _context, _sp, _model| Ok(json!({"result": "ok"})),
+        ));
         let hero = Arc::new(TavernHero::new(runtime));
 
         let dir = tempfile::tempdir().unwrap();
@@ -249,7 +251,10 @@ instructions: test
         load_handle.join().unwrap();
 
         // 加载完成后应能正常执行
-        let result = hero.execute("concurrent_agent", "task", None).await.unwrap();
+        let result = hero
+            .execute("concurrent_agent", "task", None)
+            .await
+            .unwrap();
         assert_eq!(result, json!({"result": "ok"}));
     }
 }

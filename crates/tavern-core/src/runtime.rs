@@ -11,6 +11,8 @@ pub trait Runtime: Send + Sync {
     /// * `agent_id` - 目标 Agent 的唯一标识
     /// * `task` - 任务描述
     /// * `context` - 可选的上下文 JSON 对象
+    /// * `system_prompt` - Agent 的系统提示词
+    /// * `model` - 模型标识（如 "openai/gpt-4o"）
     ///
     /// # Errors
     /// 当网络请求失败、返回非 2xx 状态码或响应无法解析时返回 [`RuntimeError`]。
@@ -19,6 +21,8 @@ pub trait Runtime: Send + Sync {
         agent_id: &str,
         task: &str,
         context: Option<Value>,
+        system_prompt: &str,
+        model: &str,
     ) -> Result<Value, RuntimeError>;
 }
 

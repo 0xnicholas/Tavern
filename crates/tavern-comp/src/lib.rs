@@ -22,4 +22,6 @@ pub use registry::{WorkflowRegistry, WorkflowSummary};
 pub use store::{EventStore, MemoryEventStore};
 pub use timer::TimerRegistry;
 pub use validator::validate_dag;
-pub use workflow::{InputDef, OutputDef, Step, StepResult, StepStatus, Workflow, WorkflowResult};
+pub use workflow::{
+    InputDef, OutputDef, Process, Step, StepResult, StepStatus, Workflow, WorkflowResult,
+};

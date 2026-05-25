@@ -29,12 +29,13 @@ impl TavernHero {
         let configs = crate::loader::load_from_dir(dir)?;
         let mut registry = self.registry.write().unwrap();
         for (config, path) in configs {
-            registry
-                .register(config)
-                .map_err(|e| e.with_path(&path))?;
+            registry.register(config).map_err(|e| e.with_path(&path))?;
         }
         drop(registry);
-        info!(count = self.registry.read().unwrap().len(), "loaded agents from directory");
+        info!(
+            count = self.registry.read().unwrap().len(),
+            "loaded agents from directory"
+        );
         Ok(())
     }
 
@@ -44,9 +45,7 @@ impl TavernHero {
         let config = crate::loader::load_agent(path)?;
         let id = config.id.clone();
         let mut registry = self.registry.write().unwrap();
-        registry
-            .register(config)
-            .map_err(|e| e.with_path(path))?;
+        registry.register(config).map_err(|e| e.with_path(path))?;
         drop(registry);
         info!(agent_id = %id, "loaded agent from file");
         Ok(id)
@@ -59,7 +58,13 @@ impl TavernHero {
 
     /// 列出所有已注册 Agent（返回完整配置的克隆）。
     pub fn list_agents(&self) -> Vec<AgentConfig> {
-        self.registry.read().unwrap().list_all().into_iter().cloned().collect()
+        self.registry
+            .read()
+            .unwrap()
+            .list_all()
+            .into_iter()
+            .cloned()
+            .collect()
     }
 
     /// 列出所有已注册 Agent 的摘要。
@@ -86,15 +91,21 @@ impl TavernHero {
         task: &str,
         context: Option<Value>,
     ) -> Result<Value, TavernError> {
-        self.registry
+        let agent = self
+            .registry
             .read()
             .unwrap()
             .get(agent_id)
+            .cloned()
             .ok_or_else(|| TavernError::AgentNotFound {
                 id: agent_id.to_string(),
             })?;
         info!(task_len = task.len(), "submitting task to runtime");
-        let result = self.runtime.execute(agent_id, task, context).await?;
+        let model = format!("{}/{}", agent.model.provider, agent.model.name);
+        let result = self
+            .runtime
+            .execute(agent_id, task, context, &agent.instructions, &model)
+            .await?;
         Ok(result)
     }
 }

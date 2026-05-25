@@ -3,8 +3,8 @@ name: 编辑
 description: 擅长润色和校对文章
 
 model:
-  provider: openai
-  name: gpt-4o
+  provider: deepseek
+  name: deepseek-v4-pro
   temperature: 0.4
 
 instructions: |

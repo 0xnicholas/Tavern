@@ -20,11 +20,11 @@ pub fn render_template(template: &str, context: &Value) -> Result<String, CompEr
     });
 
     let mut local_env = env.clone();
-    local_env.add_template("tmpl", template).map_err(|e| {
-        CompError::TemplateParse {
+    local_env
+        .add_template("tmpl", template)
+        .map_err(|e| CompError::TemplateParse {
             reason: e.to_string(),
-        }
-    })?;
+        })?;
 
     let tmpl = local_env.get_template("tmpl").expect("template just added");
     let ctx = minijinja::Value::from_serialize(context);
@@ -71,7 +71,10 @@ mod tests {
     fn test_render_no_vars() {
         let template = "no variables here";
         let context = json!({});
-        assert_eq!(render_template(template, &context).unwrap(), "no variables here");
+        assert_eq!(
+            render_template(template, &context).unwrap(),
+            "no variables here"
+        );
     }
 
     #[test]
@@ -93,7 +96,10 @@ mod tests {
     fn test_render_object_value() {
         let template = "data: {{obj}}";
         let context = json!({"obj": {"a": 1}});
-        assert_eq!(render_template(template, &context).unwrap(), "data: {\"a\": 1}");
+        assert_eq!(
+            render_template(template, &context).unwrap(),
+            "data: {\"a\": 1}"
+        );
     }
 
     #[test]
