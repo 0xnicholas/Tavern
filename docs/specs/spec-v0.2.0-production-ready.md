@@ -91,29 +91,65 @@ V0.2.0 将 Tavern 从 MVP 验证阶段推进到**生产可用**阶段。核心�
 
 ## 4. 数据模型
 
-### 4.1 EventStore Schema（SQLite / PostgreSQL）
+### 4.1 EventStore Schema
+
+SQLite 和 PostgreSQL 使用独立的迁移目录，由 `sqlx migrate` 管理。`sqlx query!` 宏使用离线查询数据（`sqlx prepare` 生成 `.sqlx/`），避免开发环境必须连接数据库。
+
+#### SQLite Schema（`migrations/sqlite/`）
 
 ```sql
--- 事件流表：真相源
+-- SQLite 不支持 JSONB、BIGSERIAL、TIMESTAMPTZ；JSON 存为 TEXT，时间戳存为 INTEGER (unix epoch 毫秒)
+PRAGMA journal_mode = WAL;
+PRAGMA synchronous = NORMAL;
+
+CREATE TABLE workflow_events (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    instance_id TEXT NOT NULL,
+    payload     TEXT NOT NULL,  -- 完整 JSON，包含 "type" 字段
+    created_at  INTEGER DEFAULT (strftime('%s', 'now') * 1000)
+);
+
+CREATE INDEX idx_events_instance_seq ON workflow_events(instance_id, id);
+
+CREATE TABLE workflow_snapshots (
+    instance_id TEXT PRIMARY KEY,
+    state       TEXT NOT NULL,   -- JSON
+    version     INTEGER NOT NULL DEFAULT 0,
+    updated_at  INTEGER DEFAULT (strftime('%s', 'now') * 1000)
+);
+
+CREATE TABLE workflow_instances (
+    instance_id   TEXT PRIMARY KEY,
+    workflow_id   TEXT NOT NULL,
+    status        TEXT NOT NULL,
+    created_at    INTEGER DEFAULT (strftime('%s', 'now') * 1000),
+    updated_at    INTEGER DEFAULT (strftime('%s', 'now') * 1000),
+    completed_at  INTEGER
+);
+
+CREATE INDEX idx_instances_status ON workflow_instances(status);
+CREATE INDEX idx_instances_workflow ON workflow_instances(workflow_id);
+```
+
+#### PostgreSQL Schema（`migrations/postgres/`）
+
+```sql
 CREATE TABLE workflow_events (
     id          BIGSERIAL PRIMARY KEY,
     instance_id UUID NOT NULL,
-    event_type  TEXT NOT NULL,
     payload     JSONB NOT NULL,
     created_at  TIMESTAMPTZ DEFAULT now()
 );
 
 CREATE INDEX idx_events_instance_seq ON workflow_events(instance_id, id);
 
--- 快照表：性能优化
 CREATE TABLE workflow_snapshots (
     instance_id UUID PRIMARY KEY,
     state       JSONB NOT NULL,
-    version     INTEGER NOT NULL DEFAULT 0,  -- 乐观锁版本
+    version     INTEGER NOT NULL DEFAULT 0,
     updated_at  TIMESTAMPTZ DEFAULT now()
 );
 
--- 实例元数据表：快速列表查询（避免全表扫描）
 CREATE TABLE workflow_instances (
     instance_id   UUID PRIMARY KEY,
     workflow_id   TEXT NOT NULL,
@@ -196,34 +232,44 @@ pub struct SqliteEventStore {
 }
 
 impl SqliteEventStore {
-    pub async fn new(path: &str) -> Result<Self, CompError>;
-    pub async fn migrate(&self) -> Result<(), CompError>;
+    pub async fn new(path: &str) -> Result<Self, CompError> {
+        let options = sqlx::sqlite::SqliteConnectOptions::new()
+            .filename(path)
+            .create_if_missing(true)
+            .journal_mode(sqlx::sqlite::SqliteJournalMode::Wal)
+            .synchronous(sqlx::sqlite::SqliteSynchronous::Normal);
+        let pool = sqlx::SqlitePool::connect_with(options).await
+            .map_err(|e| CompError::StoreError(e.to_string()))?;
+        sqlx::migrate!("migrations/sqlite").run(&pool).await
+            .map_err(|e| CompError::StoreError(e.to_string()))?;
+        Ok(Self { pool })
+    }
 }
 
 #[async_trait]
 impl EventStore for SqliteEventStore {
+    /// 整存整取：将 WorkflowEvent 完整序列化为 JSON（包含 serde tag 的 "type" 字段）
     async fn append(&self, instance_id: &str, event: WorkflowEvent) -> Result<(), CompError> {
-        let event_type = event.type_name(); // derive macro 生成
-        let payload = serde_json::to_value(&event)?;
+        let payload = serde_json::to_string(&event)
+            .map_err(|e| CompError::StoreError(e.to_string()))?;
         sqlx::query(
-            "INSERT INTO workflow_events (instance_id, event_type, payload) VALUES (?1, ?2, ?3)"
+            "INSERT INTO workflow_events (instance_id, payload) VALUES (?1, ?2)"
         )
         .bind(instance_id)
-        .bind(event_type)
         .bind(payload)
         .execute(&self.pool)
         .await
         .map_err(|e| CompError::StoreError(e.to_string()))?;
 
-        // 同步更新实例元数据
+        // 同步更新实例元数据（辅助表加速 list_by_status）
         self.upsert_instance_meta(instance_id, &event).await?;
         Ok(())
     }
 
+    /// 读取完整 JSON 后直接反序列化（serde tag 自动识别变体）
     async fn read_stream(&self, instance_id: &str) -> Result<Vec<WorkflowEvent>, CompError> {
-        let rows = sqlx::query_as::<_, (String, serde_json::Value)>(
-            "SELECT event_type, payload FROM workflow_events
-             WHERE instance_id = ?1 ORDER BY id"
+        let rows = sqlx::query_as::<_, (String,)>(
+            "SELECT payload FROM workflow_events WHERE instance_id = ?1 ORDER BY id"
         )
         .bind(instance_id)
         .fetch_all(&self.pool)
@@ -231,18 +277,31 @@ impl EventStore for SqliteEventStore {
         .map_err(|e| CompError::StoreError(e.to_string()))?;
 
         rows.into_iter()
-            .map(|(typ, payload)| WorkflowEvent::from_parts(&typ, payload))
-            .collect::<Result<Vec<_>, _>>()
+            .map(|(payload,)| serde_json::from_str(&payload)
+                .map_err(|e| CompError::StoreError(e.to_string())))
+            .collect()
     }
 
-    // 快照：每 N 个事件保存一次，或 WorkflowCompleted 时保存
+    /// 利用辅助表实现 O(1) 状态筛选（避免全表重建）
+    async fn list_by_status(&self, status: InstanceStatus) -> Result<Vec<String>, CompError> {
+        let rows = sqlx::query_as::<_, (String,)>(
+            "SELECT instance_id FROM workflow_instances WHERE status = ?1"
+        )
+        .bind(status.as_str())
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| CompError::StoreError(e.to_string()))?;
+        Ok(rows.into_iter().map(|(id,)| id).collect())
+    }
+
     async fn save_snapshot(&self, instance_id: &str, state: &InstanceState) -> Result<(), CompError> {
-        let state_json = serde_json::to_value(state)?;
+        let state_json = serde_json::to_string(state)
+            .map_err(|e| CompError::StoreError(e.to_string()))?;
         sqlx::query(
             "INSERT INTO workflow_snapshots (instance_id, state, version)
              VALUES (?1, ?2, 0)
              ON CONFLICT(instance_id) DO UPDATE SET
-             state = excluded.state, version = version + 1, updated_at = now()"
+             state = excluded.state, version = version + 1, updated_at = (strftime('%s', 'now') * 1000)"
         )
         .bind(instance_id)
         .bind(state_json)
@@ -253,7 +312,7 @@ impl EventStore for SqliteEventStore {
     }
 
     async fn load_snapshot(&self, instance_id: &str) -> Result<Option<InstanceState>, CompError> {
-        let row = sqlx::query_as::<_, (serde_json::Value,)>(
+        let row = sqlx::query_as::<_, (String,)>(
             "SELECT state FROM workflow_snapshots WHERE instance_id = ?1"
         )
         .bind(instance_id)
@@ -262,7 +321,7 @@ impl EventStore for SqliteEventStore {
         .map_err(|e| CompError::StoreError(e.to_string()))?;
 
         match row {
-            Some((json,)) => serde_json::from_value(json)
+            Some((json,)) => serde_json::from_str(&json)
                 .map_err(|e| CompError::StoreError(e.to_string())),
             None => Ok(None),
         }
@@ -270,7 +329,11 @@ impl EventStore for SqliteEventStore {
 }
 ```
 
-**PostgreSQLEventStore**：结构与 `SqliteEventStore` 基本一致，使用 `sqlx::PgPool` 和 PostgreSQL 语法（`$1` 占位符）。通过 `#[cfg(feature = "postgres")]` 条件编译。
+**PostgreSQLEventStore**：结构与 `SqliteEventStore` 基本一致，差异：
+- 使用 `sqlx::PgPool` 和 `$1` 占位符
+- 时间戳函数用 `now()` 而非 `strftime`
+- 迁移目录：`migrations/postgres/`
+- 条件编译：`#[cfg(feature = "postgres")]`
 
 ### 5.2 ConfigManager（新增）
 
@@ -294,8 +357,11 @@ pub struct TavernConfig {
 pub struct AuthConfig {
     #[serde(default = "default_auth_type")]
     pub auth_type: String,  // "none" | "api_key" | "bearer"
-    #[serde(default)]
+    /// API Key 白名单。TOML 中写数组，环境变量中用逗号分隔：
+    /// `TAVERN_AUTH_KEYS="sk-a,sk-b,sk-c"`
+    #[serde(default, deserialize_with = "deserialize_comma_separated")]
     pub keys: Vec<String>,
+    /// Bearer JWT 签名密钥（HS256），type="bearer" 时生效
     pub token_secret: Option<String>,
 }
 
@@ -309,12 +375,54 @@ pub struct StoreConfig {
     pub max_connections: u32,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+pub struct ObservabilityConfig {
+    #[serde(default = "default_log_format")]
+    pub log_format: String,  // "pretty" | "json"
+    #[serde(default = "default_true")]
+    pub metrics_enabled: bool,
+    /// 是否公开 `/metrics`（无需认证）。生产环境建议设为 false
+    #[serde(default = "default_true")]
+    pub metrics_public: bool,
+}
+
+/// 逗号分隔字符串 → Vec<String>
+fn deserialize_comma_separated<'de, D>(deserializer: D) -> Result<Vec<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let s = String::deserialize(deserializer)?;
+    Ok(s.split(',')
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect())
+}
+
 impl TavernConfig {
     pub fn load() -> Result<Self, figment::Error> {
-        Figment::new()
+        let mut figment = Figment::new()
             .merge(Toml::file("config.toml"))
-            .merge(Env::prefixed("TAVERN_"))
-            .extract()
+            .merge(Env::prefixed("TAVERN_"));
+
+        // ── V0.1.0 向后兼容：旧环境变量映射到新路径 ──
+        // 旧变量在 V0.3.0 中废弃，V0.2.0 兼容期内仍有效
+        if let Ok(url) = std::env::var("RUNTIME_URL") {
+            figment = figment.merge(("runtime", "url", url));
+        }
+        if let Ok(dir) = std::env::var("AGENT_CONFIG_DIR") {
+            figment = figment.merge(("server", "agent_config_dir", dir));
+        }
+        if let Ok(dir) = std::env::var("WORKFLOW_CONFIG_DIR") {
+            figment = figment.merge(("server", "workflow_config_dir", dir));
+        }
+        if let Ok(host) = std::env::var("SERVER_HOST") {
+            figment = figment.merge(("server", "host", host));
+        }
+        if let Ok(port) = std::env::var("SERVER_PORT") {
+            figment = figment.merge(("server", "port", port));
+        }
+
+        figment.extract()
     }
 }
 ```
@@ -325,13 +433,21 @@ impl TavernConfig {
 // crates/tavern-server/src/auth.rs
 
 use axum::{
-    extract::Request,
+    extract::{Request, State},
     middleware::Next,
     response::Response,
+    http::{StatusCode, header},
 };
 
+/// Bearer Token claim 格式（HS256 JWT）
+#[derive(Debug, serde::Deserialize)]
+struct Claims {
+    sub: String,    // tenant_id / user_id
+    exp: usize,     // Unix timestamp
+}
+
 pub async fn auth_middleware(
-    config: AuthConfig,
+    State(config): State<AuthConfig>,
     request: Request,
     next: Next,
 ) -> Response {
@@ -359,28 +475,120 @@ pub async fn auth_middleware(
         _ => (StatusCode::INTERNAL_SERVER_ERROR, "Unknown auth type").into_response(),
     }
 }
+
+fn validate_bearer(
+    token: Option<&str>,
+    secret: Option<&str>,
+) -> Result<(), jsonwebtoken::errors::Error> {
+    let token = token.ok_or_else(|| jsonwebtoken::errors::Error::from(
+        jsonwebtoken::errors::ErrorKind::InvalidToken
+    ))?;
+    let secret = secret.ok_or_else(|| jsonwebtoken::errors::Error::from(
+        jsonwebtoken::errors::ErrorKind::InvalidIssuer
+    ))?;
+    let _ = jsonwebtoken::decode::<Claims>(
+        token,
+        &jsonwebtoken::DecodingKey::from_secret(secret.as_bytes()),
+        &jsonwebtoken::Validation::new(jsonwebtoken::Algorithm::HS256),
+    )?;
+    Ok(())
+}
+```
+
+**新增依赖**（`tavern-server/Cargo.toml`）：
+```toml
+jsonwebtoken = "9"
 ```
 
 ### 5.4 SSE Handler（新增）
+
+### 5.4 SSE 与 EventStore 桥接（新增）
+
+SSE 广播与 EventStore 通过 `BroadcastingEventStore` 包装器桥接。每次 `append` 事件后自动广播到订阅者，避免内存泄漏（实例完成后广播发送器自动失效，无需清理注册表）。
 
 ```rust
 // crates/tavern-server/src/sse.rs
 
 use axum::{
+    extract::{Path, Query, State},
     response::sse::{Event, Sse},
-    extract::Path,
 };
 use futures::stream::Stream;
+use std::collections::HashMap;
 use std::convert::Infallible;
+
+/// AppState 中的广播注册表（仅保留活跃实例）
+pub type EventBroadcasts = Arc<RwLock<HashMap<String, broadcast::Sender<WorkflowEvent>>>>;
+
+/// BroadcastingEventStore：在 append 后自动广播事件
+pub struct BroadcastingEventStore {
+    inner: Arc<dyn EventStore>,
+    broadcasts: EventBroadcasts,
+}
+
+#[async_trait]
+impl EventStore for BroadcastingEventStore {
+    async fn append(&self, instance_id: &str, event: WorkflowEvent) -> Result<(), CompError> {
+        self.inner.append(instance_id, event.clone()).await?;
+        // 广播到订阅者（忽略无订阅者的错误）
+        if let Some(tx) = self.broadcasts.read().await.get(instance_id) {
+            let _ = tx.send(event);
+        }
+        Ok(())
+    }
+
+    // 其余方法直接委托给 inner
+    async fn read_stream(&self, instance_id: &str) -> Result<Vec<WorkflowEvent>, CompError> {
+        self.inner.read_stream(instance_id).await
+    }
+    async fn list_by_status(&self, status: InstanceStatus) -> Result<Vec<String>, CompError> {
+        self.inner.list_by_status(status).await
+    }
+    async fn save_snapshot(&self, instance_id: &str, state: &InstanceState) -> Result<(), CompError> {
+        self.inner.save_snapshot(instance_id, state).await
+    }
+    async fn load_snapshot(&self, instance_id: &str) -> Result<Option<InstanceState>, CompError> {
+        self.inner.load_snapshot(instance_id).await
+    }
+}
+
+/// SSE 认证参数
+#[derive(Debug, serde::Deserialize)]
+struct SseQuery {
+    api_key: Option<String>,
+}
 
 pub async fn execution_events_stream_handler(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
-) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
-    let (tx, rx) = tokio::sync::broadcast::channel::<WorkflowEvent>(128);
+    Query(query): Query<SseQuery>,
+) -> Result<Sse<impl Stream<Item = Result<Event, Infallible>>>, StatusCode> {
+    // SSE 认证：通过 query param（header 在 EventSource 中不可自定义）
+    if state.config.auth.auth_type != "none" {
+        let valid = match state.config.auth.auth_type.as_str() {
+            "api_key" => query.api_key.as_ref()
+                .map(|k| state.config.auth.keys.contains(k))
+                .unwrap_or(false),
+            _ => false, // bearer 在 SSE 中暂不支持
+        };
+        if !valid {
+            return Err(StatusCode::UNAUTHORIZED);
+        }
+    }
 
-    // 注册广播发送器到 AppState（由 EventStore append 时触发）
-    state.event_broadcasts.write().await.insert(id.clone(), tx.clone());
+    // 若该实例尚无广播发送器，新建一个（首次订阅时创建）
+    let rx = {
+        let broadcasts = state.event_broadcasts.read().await;
+        match broadcasts.get(&id) {
+            Some(tx) => tx.subscribe(),
+            None => {
+                drop(broadcasts);
+                let (tx, rx) = tokio::sync::broadcast::channel::<WorkflowEvent>(128);
+                state.event_broadcasts.write().await.insert(id.clone(), tx);
+                rx
+            }
+        }
+    };
 
     let stream = tokio_stream::wrappers::BroadcastStream::new(rx)
         .filter_map(|result| async move {
@@ -393,54 +601,33 @@ pub async fn execution_events_stream_handler(
             }
         });
 
-    Sse::new(stream).keep_alive(axum::response::sse::KeepAlive::default())
+    Ok(Sse::new(stream).keep_alive(axum::response::sse::KeepAlive::default()))
 }
 ```
 
+**广播清理**：实例进入终态（Completed/Failed）后，解释器循环结束，`ExecutionHandle` 的 `Drop` 实现从 `event_broadcasts` 中移除该实例的 key，避免内存泄漏。
+
 ### 5.5 Agent Hot Reload（扩展）
 
+Agent 热重载逻辑放在 `tavern-server` 层，与 Workflow 热重载行为一致。`TavernHero` 暴露 `reload_from_dir` 方法供 server 调用。
+
+**`tavern-hero` 层**：
+
 ```rust
-// crates/tavern-hero/src/lib.rs 或 hero.rs
+// crates/tavern-hero/src/registry.rs
+
+impl AgentRegistry {
+    /// 清空注册表（用于热重载原子替换）
+    pub fn clear(&mut self) {
+        self.agents.clear();
+    }
+}
+
+// crates/tavern-hero/src/hero.rs
 
 impl TavernHero {
-    /// 启动配置目录监听器
-    pub fn start_hot_reload(
-        &self,
-        dir: &Path,
-        debounce: Duration,
-    ) -> Result<notify::RecommendedWatcher, notify::Error> {
-        let hero = self.clone(); // Arc<TavernHero>
-        let dir = dir.to_path_buf();
-
-        let mut watcher = notify::recommended_watcher(move |res: Result<notify::Event, notify::Error>| {
-            if let Ok(event) = res {
-                match event.kind {
-                    notify::EventKind::Create(_) |
-                    notify::EventKind::Modify(_) |
-                    notify::EventKind::Remove(_) => {
-                        // debounce 逻辑：收到事件后等待 debounce 时长
-                        let hero = hero.clone();
-                        let dir = dir.clone();
-                        tokio::spawn(async move {
-                            tokio::time::sleep(debounce).await;
-                            if let Err(e) = hero.reload_from_dir(&dir).await {
-                                tracing::error!("agent hot reload failed: {}", e);
-                            } else {
-                                tracing::info!("agents hot reloaded from {:?}", dir);
-                            }
-                        });
-                    }
-                    _ => {}
-                }
-            }
-        })?;
-
-        watcher.watch(dir, notify::RecursiveMode::NonRecursive)?;
-        Ok(watcher)
-    }
-
-    /// 原子替换注册表内容
-    async fn reload_from_dir(&self, dir: &Path) -> Result<(), TavernError> {
+    /// 原子替换：清空后重新加载目录下所有 Agent
+    pub fn reload_from_dir(&self, dir: &Path) -> Result<(), TavernError> {
         let configs = crate::loader::load_from_dir(dir)?;
         let mut registry = self.registry.write().unwrap();
         registry.clear();
@@ -449,7 +636,65 @@ impl TavernHero {
                 tracing::warn!("failed to register agent from {:?}: {}", path, e);
             }
         }
+        drop(registry);
+        tracing::info!(count = self.registry.read().unwrap().len(), "agents hot reloaded");
         Ok(())
+    }
+}
+```
+
+**`tavern-server` 层**（复用现有 Workflow watcher 模式）：
+
+```rust
+// crates/tavern-server/src/main.rs
+
+async fn start_agent_watcher(
+    path: PathBuf,
+    hero: Arc<TavernHero>,
+    debounce: Duration,
+) {
+    if !path.exists() { return; }
+
+    let (tx, mut rx) = tokio::sync::mpsc::channel::<Result<notify::Event, notify::Error>>(100);
+
+    let mut watcher = match notify::RecommendedWatcher::new(
+        move |res| { let _ = tx.blocking_send(res); },
+        notify::Config::default(),
+    ) {
+        Ok(w) => w,
+        Err(e) => { tracing::error!("failed to create agent watcher: {}", e); return; }
+    };
+
+    if let Err(e) = watcher.watch(&path, notify::RecursiveMode::NonRecursive) {
+        tracing::error!("failed to watch agent directory: {}", e); return;
+    }
+
+    loop {
+        let res = match rx.recv().await {
+            Some(r) => r,
+            None => break,
+        };
+        if let Ok(event) = res {
+            match event.kind {
+                notify::EventKind::Create(_) |
+                notify::EventKind::Modify(_) |
+                notify::EventKind::Remove(_) => {
+                    // debounce：等待 debounce 时长内无新事件
+                    loop {
+                        match tokio::time::timeout(debounce, rx.recv()).await {
+                            Ok(Some(_)) => continue,
+                            Ok(None) | Err(_) => break,
+                        }
+                    }
+                    if let Err(e) = hero.reload_from_dir(&path) {
+                        tracing::error!("agent hot reload failed: {}", e);
+                    } else {
+                        tracing::info!("agents hot reloaded from {:?}", path);
+                    }
+                }
+                _ => {}
+            }
+        }
     }
 }
 ```
@@ -513,7 +758,7 @@ V0.2.0 所有非健康检查端点默认需要认证：
 
 ```
 GET  /health                    → 无需认证
-GET  /metrics                   → 无需认证（或配置可选）
+GET  /metrics                   → 默认无需认证（`metrics_public = true`），可配置为需认证
 GET  /agents                    → 需认证
 POST /agents/:id/execute        → 需认证
 GET  /workflows                 → 需认证
@@ -673,6 +918,9 @@ RUN cargo build --release -p tavern-server
 
 # Stage 4: Runtime
 FROM debian:bookworm-slim AS runtime
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates wget \
+    && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 COPY --from=builder /app/target/release/tavern-server /usr/local/bin/
 COPY configs /app/configs
@@ -758,6 +1006,7 @@ volumes:
 | `TAVERN_STORE_MAX_CONNECTIONS` | 否 | `10` | 连接池大小 |
 | `TAVERN_LOG_FORMAT` | 否 | `pretty` | 日志格式 |
 | `TAVERN_METRICS_ENABLED` | 否 | `true` | 是否启用 /metrics |
+| `TAVERN_METRICS_PUBLIC` | 否 | `true` | `/metrics` 是否公开（false 时需认证） |
 | `TAVERN_RUNTIME_URL` | 否 | — | Runtime 地址 |
 | `TAVERN_RUNTIME_TIMEOUT_SECONDS` | 否 | `300` | Runtime 超时 |
 | `TAVERN_RELOAD_AGENTS` | 否 | `true` | Agent 热重载 |
@@ -776,12 +1025,14 @@ volumes:
 V0.1.0 的环境变量仍然兼容，但推荐迁移到 TOML：
 
 ```bash
-# V0.1.0
+# V0.1.0（旧环境变量，V0.2.0 兼容期内仍有效，V0.3.0 废弃）
 RUNTIME_URL=http://localhost:8080 AGENT_CONFIG_DIR=./configs/agents cargo run -p tavern-server
 
-# V0.2.0
+# V0.2.0（推荐：TOML + TAVERN_ 前缀环境变量）
 cargo run -p tavern-server  # 自动读取 config.toml 和环境变量
 ```
+
+> **兼容性说明**：V0.2.0 的 `TavernConfig::load()` 会同时读取旧环境变量（`RUNTIME_URL`、`AGENT_CONFIG_DIR`、`SERVER_HOST`、`SERVER_PORT`、`WORKFLOW_CONFIG_DIR`）作为回退。这些旧变量将在 **V0.3.0 中移除**，请尽早迁移到 `TAVERN_` 前缀变量。
 
 **2. 认证启用**
 
@@ -828,6 +1079,8 @@ path = "./tavern.db"
 - [ ] Docker 镜像：`docker build` 成功，`docker-compose up` 可运行
 - [ ] 健康检查：`/health` 返回 store 和 runtime 连通状态
 - [ ] 结构化日志：`TAVERN_LOG_FORMAT=json` 输出单行 JSON
+- [ ] SQLite WAL 模式：`PRAGMA journal_mode` 返回 `wal`
+- [ ] `/metrics` 认证：`metrics_public = false` 时未认证访问返回 401
 
 ---
 
