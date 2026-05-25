@@ -37,9 +37,8 @@ impl TavernConfig {
         ));
 
         // 2. config.toml（如果存在）
-        let config_path = std::env::var("TAVERN_CONFIG_PATH").unwrap_or_else(|_| {
-            "config.toml".to_string()
-        });
+        let config_path =
+            std::env::var("TAVERN_CONFIG_PATH").unwrap_or_else(|_| "config.toml".to_string());
         if std::path::Path::new(&config_path).exists() {
             figment = figment.merge(Toml::file(&config_path));
         }

@@ -19,9 +19,9 @@ pub use executor::StepExecutor;
 pub use handle::ExecutionHandle;
 pub use instance::{InstanceState, InstanceStatus};
 pub use registry::{WorkflowRegistry, WorkflowSummary};
-pub use store::{EventStore, MemoryEventStore};
 #[cfg(feature = "sqlite")]
 pub use store::SqliteEventStore;
+pub use store::{EventStore, MemoryEventStore};
 pub use timer::TimerRegistry;
 pub use validator::validate_dag;
 pub use workflow::{

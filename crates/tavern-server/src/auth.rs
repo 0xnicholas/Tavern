@@ -25,7 +25,10 @@ pub async fn auth_middleware(
     req: Request,
     next: Next,
 ) -> Result<Response, StatusCode> {
-    let state = req.extensions().get::<Arc<tavern_config::AuthConfig>>().cloned();
+    let state = req
+        .extensions()
+        .get::<Arc<tavern_config::AuthConfig>>()
+        .cloned();
     let config = match state {
         Some(c) => c,
         None => return Ok(next.run(req).await),
@@ -45,11 +48,7 @@ pub async fn auth_middleware(
     }
 }
 
-fn check_api_key(
-    headers: &HeaderMap,
-    query: &SseQuery,
-    valid_keys: &[String],
-) -> bool {
+fn check_api_key(headers: &HeaderMap, query: &SseQuery, valid_keys: &[String]) -> bool {
     let key = headers
         .get("x-api-key")
         .and_then(|v| v.to_str().ok())
@@ -90,14 +89,22 @@ mod tests {
     fn test_check_api_key_valid() {
         let mut headers = HeaderMap::new();
         headers.insert("x-api-key", "sk-abc".parse().unwrap());
-        assert!(check_api_key(&headers, &SseQuery { api_key: None }, &["sk-abc".to_string()]));
+        assert!(check_api_key(
+            &headers,
+            &SseQuery { api_key: None },
+            &["sk-abc".to_string()]
+        ));
     }
 
     #[test]
     fn test_check_api_key_invalid() {
         let mut headers = HeaderMap::new();
         headers.insert("x-api-key", "bad".parse().unwrap());
-        assert!(!check_api_key(&headers, &SseQuery { api_key: None }, &["sk-abc".to_string()]));
+        assert!(!check_api_key(
+            &headers,
+            &SseQuery { api_key: None },
+            &["sk-abc".to_string()]
+        ));
     }
 
     #[test]
@@ -105,7 +112,9 @@ mod tests {
         let headers = HeaderMap::new();
         assert!(check_api_key(
             &headers,
-            &SseQuery { api_key: Some("sk-abc".to_string()) },
+            &SseQuery {
+                api_key: Some("sk-abc".to_string())
+            },
             &["sk-abc".to_string()]
         ));
     }

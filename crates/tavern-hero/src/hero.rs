@@ -51,7 +51,10 @@ impl TavernHero {
             }
         }
         drop(registry);
-        info!(count = self.registry.read().unwrap().len(), "agents hot reloaded");
+        info!(
+            count = self.registry.read().unwrap().len(),
+            "agents hot reloaded"
+        );
         Ok(())
     }
 

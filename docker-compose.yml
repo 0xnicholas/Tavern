@@ -1,0 +1,39 @@
+version: "3.8"
+
+services:
+  tavern:
+    build: .
+    ports:
+      - "3000:3000"
+    environment:
+      - RUNTIME_URL=http://pandaria:8080
+      - TAVERN_STORE_TYPE=sqlite
+      - TAVERN_DATABASE_URL=sqlite:///app/data/tavern.db
+    volumes:
+      - tavern-data:/app/data
+    depends_on:
+      - db
+      - pandaria
+    restart: unless-stopped
+
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: tavern
+      POSTGRES_PASSWORD: tavern
+      POSTGRES_DB: tavern
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+
+  pandaria:
+    image: pandaria/runtime:latest
+    ports:
+      - "8080:8080"
+    environment:
+      - PORT=8080
+
+volumes:
+  tavern-data:
+  postgres-data:

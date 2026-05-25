@@ -33,10 +33,7 @@ impl BroadcastingEventStore {
         }
     }
 
-    pub fn get_or_create_sender(
-        &self,
-        instance_id: &str,
-    ) -> broadcast::Receiver<WorkflowEvent> {
+    pub fn get_or_create_sender(&self, instance_id: &str) -> broadcast::Receiver<WorkflowEvent> {
         let _broadcasts = self.broadcasts.clone();
         let _id = instance_id.to_string();
         unreachable!("use subscribe method instead")

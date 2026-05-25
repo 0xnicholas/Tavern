@@ -86,11 +86,7 @@ pub fn map_tavern_error(err: &TavernError) -> (StatusCode, ApiError) {
 
 pub async fn health_handler(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     // Check event store connectivity
-    let store_check = match state
-        .event_store
-        .read_stream("__health_check__")
-        .await
-    {
+    let store_check = match state.event_store.read_stream("__health_check__").await {
         Ok(_) => "connected",
         Err(_) => "disconnected",
     };

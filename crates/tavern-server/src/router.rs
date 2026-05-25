@@ -17,8 +17,7 @@ pub fn create_router(state: Arc<AppState>) -> Router {
     let metrics_public = state.config.observability.metrics_public;
     let auth_config = Arc::new(state.config.auth.clone());
 
-    let mut public_routes = Router::new()
-        .route("/health", get(handlers::health_handler));
+    let mut public_routes = Router::new().route("/health", get(handlers::health_handler));
 
     let mut protected_routes = Router::new()
         .route("/agents", get(handlers::list_agents_handler))

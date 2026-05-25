@@ -163,17 +163,15 @@ impl SqliteEventStore {
 #[async_trait]
 impl EventStore for SqliteEventStore {
     async fn append(&self, instance_id: &str, event: WorkflowEvent) -> Result<(), CompError> {
-        let payload = serde_json::to_string(&event)
-            .map_err(|e| CompError::StoreError(e.to_string()))?;
+        let payload =
+            serde_json::to_string(&event).map_err(|e| CompError::StoreError(e.to_string()))?;
 
-        sqlx::query(
-            "INSERT INTO workflow_events (instance_id, payload) VALUES (?1, ?2)",
-        )
-        .bind(instance_id)
-        .bind(&payload)
-        .execute(&self.pool)
-        .await
-        .map_err(|e| CompError::StoreError(e.to_string()))?;
+        sqlx::query("INSERT INTO workflow_events (instance_id, payload) VALUES (?1, ?2)")
+            .bind(instance_id)
+            .bind(&payload)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| CompError::StoreError(e.to_string()))?;
 
         // Update instance meta for list_by_status
         let (workflow_id, status) = match &event {
@@ -206,8 +204,8 @@ impl EventStore for SqliteEventStore {
 
         let mut events = Vec::new();
         for (payload,) in rows {
-            let event: WorkflowEvent = serde_json::from_str(&payload)
-                .map_err(|e| CompError::StoreError(e.to_string()))?;
+            let event: WorkflowEvent =
+                serde_json::from_str(&payload).map_err(|e| CompError::StoreError(e.to_string()))?;
             events.push(event);
         }
         Ok(events)
@@ -231,8 +229,8 @@ impl EventStore for SqliteEventStore {
         instance_id: &str,
         state: &InstanceState,
     ) -> Result<(), CompError> {
-        let state_json = serde_json::to_string(state)
-            .map_err(|e| CompError::StoreError(e.to_string()))?;
+        let state_json =
+            serde_json::to_string(state).map_err(|e| CompError::StoreError(e.to_string()))?;
 
         sqlx::query(
             r#"
@@ -467,7 +465,10 @@ mod tests {
             )
             .await
             .unwrap();
-        store.append("i1", WorkflowEvent::InstanceStarted).await.unwrap();
+        store
+            .append("i1", WorkflowEvent::InstanceStarted)
+            .await
+            .unwrap();
         store
             .append(
                 "i1",
@@ -489,7 +490,10 @@ mod tests {
             )
             .await
             .unwrap();
-        store.append("i2", WorkflowEvent::InstanceStarted).await.unwrap();
+        store
+            .append("i2", WorkflowEvent::InstanceStarted)
+            .await
+            .unwrap();
         store
             .append(
                 "i2",
