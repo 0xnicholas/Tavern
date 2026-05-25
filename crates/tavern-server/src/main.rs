@@ -8,8 +8,11 @@ use tavern_core::Runtime;
 use tavern_hero::TavernHero;
 use tracing::info;
 
+mod auth;
 mod handlers;
 mod router;
+mod shutdown;
+mod sse;
 mod state;
 
 #[tokio::main]
@@ -101,6 +104,7 @@ async fn main() {
         max_concurrency: config.server.max_workflow_concurrency,
         event_store,
         execution_handles: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
+        config: config.clone(),
     }));
 
     let addr: SocketAddr = match format!("{}:{}", config.server.host, config.server.port).parse() {
@@ -122,6 +126,7 @@ async fn main() {
     };
 
     axum::serve(listener, app)
+        .with_graceful_shutdown(shutdown::graceful_shutdown_listener())
         .await
         .unwrap();
 }
@@ -535,6 +540,7 @@ instructions: 研究
             max_concurrency: usize::MAX,
             event_store: Arc::new(tavern_comp::MemoryEventStore::new()),
             execution_handles: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
+            config: tavern_config::TavernConfig::default(),
         }))
     }
 
@@ -1055,6 +1061,7 @@ instructions: 研究
             max_concurrency: usize::MAX,
             event_store: Arc::new(tavern_comp::MemoryEventStore::new()),
             execution_handles: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
+            config: tavern_config::TavernConfig::default(),
         }));
 
         // Start workflow

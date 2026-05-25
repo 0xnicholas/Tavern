@@ -84,8 +84,24 @@ pub fn map_tavern_error(err: &TavernError) -> (StatusCode, ApiError) {
     }
 }
 
-pub async fn health_handler() -> impl IntoResponse {
-    Json(serde_json::json!({"status": "ok"}))
+pub async fn health_handler(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+    // Check event store connectivity
+    let store_check = match state
+        .event_store
+        .read_stream("__health_check__")
+        .await
+    {
+        Ok(_) => "connected",
+        Err(_) => "disconnected",
+    };
+
+    Json(serde_json::json!({
+        "status": "ok",
+        "version": env!("CARGO_PKG_VERSION"),
+        "checks": {
+            "store": store_check,
+        }
+    }))
 }
 
 pub async fn list_agents_handler(State(state): State<Arc<AppState>>) -> impl IntoResponse {

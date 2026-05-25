@@ -1,7 +1,8 @@
 use axum::{
     extract::DefaultBodyLimit,
+    middleware,
     routing::{delete, get, post},
-    Router,
+    Extension, Router,
 };
 use std::sync::Arc;
 use tower_http::trace::TraceLayer;
@@ -12,8 +13,14 @@ use crate::state::AppState;
 const MAX_BODY_SIZE: usize = 1024 * 1024; // 1 MiB
 
 pub fn create_router(state: Arc<AppState>) -> Router {
-    Router::new()
-        .route("/health", get(handlers::health_handler))
+    let auth_type = state.config.auth.auth_type.clone();
+    let metrics_public = state.config.observability.metrics_public;
+    let auth_config = Arc::new(state.config.auth.clone());
+
+    let mut public_routes = Router::new()
+        .route("/health", get(handlers::health_handler));
+
+    let mut protected_routes = Router::new()
         .route("/agents", get(handlers::list_agents_handler))
         .route("/agents/:id", get(handlers::get_agent_handler))
         .route("/agents/:id/execute", post(handlers::execute_agent_handler))
@@ -42,9 +49,25 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         .route(
             "/executions/:id/cancel",
             post(handlers::cancel_execution_handler),
-        )
-        .route("/metrics", get(handlers::metrics_handler))
+        );
+
+    if metrics_public {
+        public_routes = public_routes.route("/metrics", get(handlers::metrics_handler));
+    } else {
+        protected_routes = protected_routes.route("/metrics", get(handlers::metrics_handler));
+    }
+
+    if auth_type != "none" {
+        protected_routes = protected_routes.layer(middleware::from_fn_with_state(
+            auth_config.clone(),
+            crate::auth::auth_middleware,
+        ));
+    }
+
+    public_routes
+        .merge(protected_routes)
         .layer(DefaultBodyLimit::max(MAX_BODY_SIZE))
         .layer(TraceLayer::new_for_http())
         .with_state(state)
+        .layer(Extension(auth_config))
 }

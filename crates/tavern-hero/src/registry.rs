@@ -69,6 +69,11 @@ impl AgentRegistry {
             .collect()
     }
 
+    /// 清空所有已注册的 Agent。
+    pub fn clear(&mut self) {
+        self.agents.clear();
+    }
+
     /// 迭代所有已注册 Agent（零分配）。
     pub fn iter(&self) -> impl Iterator<Item = &AgentConfig> {
         self.agents.values()

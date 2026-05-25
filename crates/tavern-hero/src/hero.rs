@@ -39,6 +39,22 @@ impl TavernHero {
         Ok(())
     }
 
+    /// 热重载：清空后从目录重新加载所有 Agent。
+    #[instrument(skip(self))]
+    pub fn reload_from_dir(&self, dir: &Path) -> Result<(), TavernError> {
+        let configs = crate::loader::load_from_dir(dir)?;
+        let mut registry = self.registry.write().unwrap();
+        registry.clear();
+        for (config, path) in configs {
+            if let Err(e) = registry.register(config) {
+                tracing::warn!("failed to register agent from {:?}: {}", path, e);
+            }
+        }
+        drop(registry);
+        info!(count = self.registry.read().unwrap().len(), "agents hot reloaded");
+        Ok(())
+    }
+
     /// 加载单个 Agent 配置，返回注册的 agent_id。
     #[instrument(skip(self))]
     pub fn load_agent(&self, path: &Path) -> Result<String, TavernError> {

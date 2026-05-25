@@ -23,4 +23,6 @@ pub struct AppState {
     pub event_store: Arc<dyn tavern_comp::EventStore>,
     /// 活跃执行实例的信号通道，用于 signal/cancel 操作
     pub execution_handles: Arc<RwLock<HashMap<String, mpsc::Sender<WorkflowEvent>>>>,
+    /// 运行时配置（用于认证中间件等）
+    pub config: tavern_config::TavernConfig,
 }
