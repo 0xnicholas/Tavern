@@ -89,7 +89,7 @@ pub async fn health_handler() -> impl IntoResponse {
 }
 
 pub async fn list_agents_handler(State(state): State<Arc<AppState>>) -> impl IntoResponse {
-    let summaries = state.hero.list_agents_summary();
+    let summaries = state.hero.list_agents_summary().await;
     Json(summaries)
 }
 
@@ -97,7 +97,7 @@ pub async fn get_agent_handler(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
 ) -> Result<impl IntoResponse, (StatusCode, ApiError)> {
-    match state.hero.get_agent(&id) {
+    match state.hero.get_agent(&id).await {
         Some(config) => Ok(Json(config.clone())),
         None => Err(map_tavern_error(&TavernError::AgentNotFound { id })),
     }

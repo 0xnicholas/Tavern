@@ -137,11 +137,11 @@ impl WorkflowEngine {
     }
 
     /// 验证 Workflow 的合法性（含动态检查）。
-    pub fn validate(&self, workflow: &Workflow) -> Result<(), CompError> {
+    pub async fn validate(&self, workflow: &Workflow) -> Result<(), CompError> {
         workflow.validate_static()?;
 
         for step in &workflow.steps {
-            if self.hero.get_agent(&step.agent_id).is_none() {
+            if self.hero.get_agent(&step.agent_id).await.is_none() {
                 return Err(CompError::AgentNotFound {
                     id: step.agent_id.clone(),
                 });
@@ -150,7 +150,7 @@ impl WorkflowEngine {
 
         // Hierarchical: 额外检查 Manager agent
         if let Process::Hierarchical(cfg) = &workflow.process {
-            if self.hero.get_agent(&cfg.agent_id).is_none() {
+            if self.hero.get_agent(&cfg.agent_id).await.is_none() {
                 return Err(CompError::AgentNotFound {
                     id: cfg.agent_id.clone(),
                 });
@@ -164,7 +164,7 @@ impl WorkflowEngine {
                     .planning_agent
                     .as_deref()
                     .unwrap_or(&workflow.steps[0].agent_id);
-                if self.hero.get_agent(agent_id).is_none() {
+                if self.hero.get_agent(agent_id).await.is_none() {
                     return Err(CompError::PlanningAgentNotRegistered {
                         id: agent_id.to_string(),
                     });
@@ -182,7 +182,7 @@ impl WorkflowEngine {
         workflow: &Workflow,
         inputs: Value,
     ) -> Result<ExecutionHandle, CompError> {
-        self.validate(workflow)?;
+        self.validate(workflow).await?;
         let inputs = normalize_inputs(workflow, &inputs)?;
 
         // ── Planning Phase ──
@@ -317,6 +317,11 @@ impl WorkflowEngine {
             }
         }
 
+        // Re-validate DAG after planner modified dependencies
+        crate::validator::validate_dag(&new_workflow).map_err(|e| CompError::PlanningError {
+            reason: format!("planner produced invalid dependencies: {}", e),
+        })?;
+
         Ok(new_workflow)
     }
 
@@ -348,7 +353,7 @@ impl WorkflowEngine {
 
     // ── Hierarchical Process ──
 
-    fn build_manager_prompt(
+    async fn build_manager_prompt(
         &self,
         workflow: &Workflow,
         manager_config: &ManagerConfig,
@@ -360,7 +365,7 @@ impl WorkflowEngine {
         let seen: std::collections::HashSet<&str> =
             workflow.steps.iter().map(|s| s.agent_id.as_str()).collect();
         for agent_id in &seen {
-            if let Some(agent) = self.hero.get_agent(agent_id) {
+            if let Some(agent) = self.hero.get_agent(agent_id).await {
                 let instr_summary: String = agent.instructions.chars().take(300).collect();
                 let skills: Vec<String> = agent.skills.iter().map(|s| s.id.clone()).collect();
                 agent_desc.push_str(&format!(
@@ -530,13 +535,6 @@ impl WorkflowEngine {
                                         format!("retry_{}_{}", step_id, attempt + 1),
                                         scheduled_at,
                                     ).await;
-                                }
-
-                                if let WorkflowEvent::StepFailed { step_id, will_retry: false, .. } = &event {
-                                    let reason = state.step_results.get(step_id)
-                                        .and_then(|r| r.error.clone())
-                                        .unwrap_or_else(|| "step failed".to_string());
-                                    break Err(CompError::StepFailed { step_id: step_id.clone(), reason });
                                 }
 
                                 if let WorkflowEvent::TimerFired { timer_id } = &event {
@@ -777,7 +775,7 @@ impl WorkflowEngine {
                     &manager_config,
                     &completed_tasks,
                     &pending_ids,
-                );
+                ).await;
 
                 let manager_result = self
                     .hero
@@ -812,7 +810,7 @@ impl WorkflowEngine {
                                         ),
                                     })?;
 
-                                if self.hero.get_agent(&agent_id).is_none() {
+                                if self.hero.get_agent(&agent_id).await.is_none() {
                                     return Err(CompError::ManagerError {
                                         reason: format!(
                                             "Manager returned unknown agent_id: {}",
@@ -896,6 +894,24 @@ impl WorkflowEngine {
                                 };
 
                                 completed_tasks.push(step_result);
+
+                                // Check if any task failed permanently
+                                if let Some(failed) = completed_tasks.iter().find(|ct| ct.error.is_some()) {
+                                    let reason = format!(
+                                        "step '{}' failed: {}",
+                                        failed.task_id,
+                                        failed.error.as_ref().unwrap()
+                                    );
+                                    let event = WorkflowEvent::WorkflowFailed {
+                                        reason: reason.clone(),
+                                        failed_at: Utc::now(),
+                                    };
+                                    self.apply_and_persist(&instance_id, event, &mut state).await?;
+                                    break Err(CompError::StepFailed {
+                                        step_id: failed.task_id.clone(),
+                                        reason,
+                                    });
+                                }
                             }
                             ManagerDecision::Done => {
                                 let outputs = self.build_workflow_outputs(&workflow, &state)?;

@@ -3,6 +3,7 @@ use std::sync::Arc;
 
 use serde_json::Value;
 use tavern_core::{AgentConfig, AgentSummary, Runtime};
+use tokio::sync::RwLock;
 use tracing::{info, instrument};
 
 use crate::error::TavernError;
@@ -10,7 +11,7 @@ use crate::registry::AgentRegistry;
 
 /// Agent 管理核心，负责加载、注册和向 Runtime 提交任务。
 pub struct TavernHero {
-    registry: std::sync::RwLock<AgentRegistry>,
+    registry: RwLock<AgentRegistry>,
     runtime: Arc<dyn Runtime>,
 }
 
@@ -18,22 +19,23 @@ impl TavernHero {
     /// 初始化，注入 Runtime 实现。
     pub fn new(runtime: Arc<dyn Runtime>) -> Self {
         Self {
-            registry: std::sync::RwLock::new(AgentRegistry::new()),
+            registry: RwLock::new(AgentRegistry::new()),
             runtime,
         }
     }
 
     /// 从目录批量加载 YAML 配置。
     #[instrument(skip(self))]
-    pub fn load_from_dir(&self, dir: &Path) -> Result<(), TavernError> {
+    pub async fn load_from_dir(&self, dir: &Path) -> Result<(), TavernError> {
         let configs = crate::loader::load_from_dir(dir)?;
-        let mut registry = self.registry.write().unwrap();
+        let mut registry = self.registry.write().await;
         for (config, path) in configs {
             registry.register(config).map_err(|e| e.with_path(&path))?;
         }
+        let count = registry.len();
         drop(registry);
         info!(
-            count = self.registry.read().unwrap().len(),
+            count = count,
             "loaded agents from directory"
         );
         Ok(())
@@ -41,10 +43,10 @@ impl TavernHero {
 
     /// 加载单个 Agent 配置，返回注册的 agent_id。
     #[instrument(skip(self))]
-    pub fn load_agent(&self, path: &Path) -> Result<String, TavernError> {
+    pub async fn load_agent(&self, path: &Path) -> Result<String, TavernError> {
         let config = crate::loader::load_agent(path)?;
         let id = config.id.clone();
-        let mut registry = self.registry.write().unwrap();
+        let mut registry = self.registry.write().await;
         registry.register(config).map_err(|e| e.with_path(path))?;
         drop(registry);
         info!(agent_id = %id, "loaded agent from file");
@@ -52,15 +54,15 @@ impl TavernHero {
     }
 
     /// 查询已注册 Agent。
-    pub fn get_agent(&self, id: &str) -> Option<AgentConfig> {
-        self.registry.read().unwrap().get(id).cloned()
+    pub async fn get_agent(&self, id: &str) -> Option<AgentConfig> {
+        self.registry.read().await.get(id).cloned()
     }
 
     /// 列出所有已注册 Agent（返回完整配置的克隆）。
-    pub fn list_agents(&self) -> Vec<AgentConfig> {
+    pub async fn list_agents(&self) -> Vec<AgentConfig> {
         self.registry
             .read()
-            .unwrap()
+            .await
             .list_all()
             .into_iter()
             .cloned()
@@ -68,18 +70,8 @@ impl TavernHero {
     }
 
     /// 列出所有已注册 Agent 的摘要。
-    pub fn list_agents_summary(&self) -> Vec<AgentSummary> {
-        self.registry.read().unwrap().list_summary()
-    }
-
-    /// 迭代所有已注册 Agent。
-    pub fn iter_agents(&self) -> impl Iterator<Item = AgentConfig> {
-        self.list_agents().into_iter()
-    }
-
-    /// 迭代所有已注册 Agent 的摘要。
-    pub fn iter_agents_summary(&self) -> impl Iterator<Item = AgentSummary> {
-        self.list_agents_summary().into_iter()
+    pub async fn list_agents_summary(&self) -> Vec<AgentSummary> {
+        self.registry.read().await.list_summary()
     }
 
     /// 提交任务执行。
@@ -94,7 +86,7 @@ impl TavernHero {
         let agent = self
             .registry
             .read()
-            .unwrap()
+            .await
             .get(agent_id)
             .cloned()
             .ok_or_else(|| TavernError::AgentNotFound {

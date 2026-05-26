@@ -12,7 +12,7 @@ pub use tavern_core::{is_valid_id, ManagerConfig, Plan, PlanningConfig, Process}
 /// 工作流的完整配置定义。
 ///
 /// 自定义反序列化以支持 `process: hierarchical` + `manager:` YAML 双 key 语法。
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone)]
 pub struct Workflow {
     /// 全局唯一标识符
     /// 约束：^[a-zA-Z0-9_-]+$，长度 1-64
@@ -22,7 +22,6 @@ pub struct Workflow {
     pub name: String,
 
     /// 描述（可选）
-    #[serde(default)]
     pub description: Option<String>,
 
     /// 执行步骤列表
@@ -30,23 +29,46 @@ pub struct Workflow {
 
     /// 外部输入参数定义
     /// 默认：空列表
-    #[serde(default)]
     pub inputs: Vec<InputDef>,
 
     /// 工作流最终输出定义
     /// 默认：空列表（REST 响应中 outputs 字段为空对象 {}）
-    #[serde(default)]
     pub outputs: Vec<OutputDef>,
 
     /// 执行策略
     /// YAML 缺失时默认 Sequential
-    #[serde(default)]
     pub process: Process,
 
     /// Planning 配置
     /// YAML 缺失时默认 None（不启用 Planning）
-    #[serde(default)]
     pub planning: Option<PlanningConfig>,
+}
+
+impl Serialize for Workflow {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        use serde::ser::SerializeStruct;
+        let mut state = serializer.serialize_struct("Workflow", 8)?;
+        state.serialize_field("id", &self.id)?;
+        state.serialize_field("name", &self.name)?;
+        state.serialize_field("description", &self.description)?;
+        state.serialize_field("steps", &self.steps)?;
+        state.serialize_field("inputs", &self.inputs)?;
+        state.serialize_field("outputs", &self.outputs)?;
+        match &self.process {
+            Process::Sequential => {
+                state.serialize_field("process", "sequential")?;
+            }
+            Process::Hierarchical(cfg) => {
+                state.serialize_field("process", "hierarchical")?;
+                state.serialize_field("manager", cfg)?;
+            }
+        }
+        state.serialize_field("planning", &self.planning)?;
+        state.end()
+    }
 }
 
 impl<'de> Deserialize<'de> for Workflow {

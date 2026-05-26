@@ -40,7 +40,7 @@ async fn main() {
     let hero = TavernHero::new(runtime);
     let config_path = Path::new(&agent_config_dir);
     if config_path.exists() {
-        if let Err(e) = hero.load_from_dir(config_path) {
+        if let Err(e) = hero.load_from_dir(config_path).await {
             tracing::error!("failed to load agent configs: {}", e);
         }
     }
@@ -256,7 +256,7 @@ mod tests {
         }
     }
 
-    fn create_test_app() -> axum::Router {
+    async fn create_test_app() -> axum::Router {
         create_test_app_with_workflow(
             |_agent_id, task, _context, _sp, _model| {
                 if task.starts_with("research") {
@@ -269,11 +269,12 @@ mod tests {
             },
             default_workflow(),
         )
+        .await
     }
 
     #[tokio::test]
     async fn test_health() {
-        let app = create_test_app();
+        let app = create_test_app().await;
         let response = app
             .oneshot(
                 Request::builder()
@@ -288,7 +289,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_list_agents() {
-        let app = create_test_app();
+        let app = create_test_app().await;
         let response = app
             .oneshot(
                 Request::builder()
@@ -303,7 +304,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_agent_found() {
-        let app = create_test_app();
+        let app = create_test_app().await;
         let response = app
             .oneshot(
                 Request::builder()
@@ -318,7 +319,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_agent_not_found() {
-        let app = create_test_app();
+        let app = create_test_app().await;
         let response = app
             .oneshot(
                 Request::builder()
@@ -333,7 +334,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_execute_agent_success() {
-        let app = create_test_app();
+        let app = create_test_app().await;
         let response = app
             .oneshot(
                 Request::builder()
@@ -350,7 +351,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_execute_agent_not_found() {
-        let app = create_test_app();
+        let app = create_test_app().await;
         let response = app
             .oneshot(
                 Request::builder()
@@ -369,7 +370,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_list_workflows() {
-        let app = create_test_app();
+        let app = create_test_app().await;
         let response = app
             .oneshot(
                 Request::builder()
@@ -384,7 +385,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_workflow_found() {
-        let app = create_test_app();
+        let app = create_test_app().await;
         let response = app
             .oneshot(
                 Request::builder()
@@ -399,7 +400,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_workflow_not_found() {
-        let app = create_test_app();
+        let app = create_test_app().await;
         let response = app
             .oneshot(
                 Request::builder()
@@ -414,7 +415,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_run_workflow_success() {
-        let app = create_test_app();
+        let app = create_test_app().await;
         let response = app
             .oneshot(
                 Request::builder()
@@ -442,7 +443,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_run_workflow_not_found() {
-        let app = create_test_app();
+        let app = create_test_app().await;
         let response = app
             .oneshot(
                 Request::builder()
@@ -459,7 +460,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_run_workflow_missing_input() {
-        let app = create_test_app();
+        let app = create_test_app().await;
         let response = app
             .oneshot(
                 Request::builder()
@@ -474,7 +475,7 @@ mod tests {
         assert_eq!(response.status(), StatusCode::BAD_REQUEST);
     }
 
-    fn create_test_app_with_workflow<F>(handler: F, workflow: tavern_comp::Workflow) -> axum::Router
+    async fn create_test_app_with_workflow<F>(handler: F, workflow: tavern_comp::Workflow) -> axum::Router
     where
         F: Fn(&str, &str, Option<Value>, &str, &str) -> Result<Value, tavern_core::RuntimeError>
             + Send
@@ -497,7 +498,7 @@ instructions: 研究
 "#,
         )
         .unwrap();
-        hero.load_from_dir(dir.path()).unwrap();
+        hero.load_from_dir(dir.path()).await.unwrap();
         let hero = Arc::new(hero);
 
         let mut registry = tavern_comp::WorkflowRegistry::new();
@@ -541,7 +542,7 @@ instructions: 研究
             process: tavern_comp::Process::Sequential,
             planning: None,
         };
-        let app = create_test_app_with_workflow(|_, _, _, _, _| Ok(json!("ok")), wf);
+        let app = create_test_app_with_workflow(|_, _, _, _, _| Ok(json!("ok")), wf).await;
         let response = app
             .oneshot(
                 Request::builder()
@@ -588,7 +589,7 @@ instructions: 研究
                 })
             },
             wf,
-        );
+        ).await;
         let response = app
             .oneshot(
                 Request::builder()
@@ -605,7 +606,7 @@ instructions: 研究
 
     #[tokio::test]
     async fn test_metrics_endpoint() {
-        let app = create_test_app();
+        let app = create_test_app().await;
         let response = app
             .oneshot(
                 Request::builder()
@@ -628,7 +629,7 @@ instructions: 研究
 
     #[tokio::test]
     async fn test_create_and_delete_workflow() {
-        let app = create_test_app();
+        let app = create_test_app().await;
         let workflow_json = serde_json::json!({
             "id": "new_flow",
             "name": "New Flow",
@@ -704,7 +705,7 @@ instructions: 研究
 
     #[tokio::test]
     async fn test_start_workflow_returns_202_and_execution_id() {
-        let app = create_test_app();
+        let app = create_test_app().await;
         let response = app
             .oneshot(
                 Request::builder()
@@ -727,7 +728,7 @@ instructions: 研究
 
     #[tokio::test]
     async fn test_get_execution_not_found() {
-        let app = create_test_app();
+        let app = create_test_app().await;
         let response = app
             .oneshot(
                 Request::builder()
@@ -742,7 +743,7 @@ instructions: 研究
 
     #[tokio::test]
     async fn test_get_execution_events_not_found() {
-        let app = create_test_app();
+        let app = create_test_app().await;
         let response = app
             .oneshot(
                 Request::builder()
@@ -757,7 +758,7 @@ instructions: 研究
 
     #[tokio::test]
     async fn test_signal_execution_not_found() {
-        let app = create_test_app();
+        let app = create_test_app().await;
         let response = app
             .oneshot(
                 Request::builder()
@@ -776,7 +777,7 @@ instructions: 研究
 
     #[tokio::test]
     async fn test_cancel_execution_not_found() {
-        let app = create_test_app();
+        let app = create_test_app().await;
         let response = app
             .oneshot(
                 Request::builder()
@@ -794,7 +795,7 @@ instructions: 研究
     async fn test_start_and_get_execution_flow() {
         use std::time::Duration;
 
-        let app = create_test_app();
+        let app = create_test_app().await;
 
         // Start workflow
         let response = app
@@ -889,7 +890,7 @@ instructions: 研究
             process: tavern_comp::Process::Sequential,
             planning: None,
         };
-        let app = create_test_app_with_workflow(|_, _, _, _, _| Ok(json!("done")), wf);
+        let app = create_test_app_with_workflow(|_, _, _, _, _| Ok(json!("done")), wf).await;
 
         // Start workflow
         let response = app
@@ -1017,7 +1018,7 @@ instructions: 研究
 "#,
         )
         .unwrap();
-        hero.load_from_dir(dir.path()).unwrap();
+        hero.load_from_dir(dir.path()).await.unwrap();
         let hero = Arc::new(hero);
 
         let mut registry = tavern_comp::WorkflowRegistry::new();

@@ -9,7 +9,7 @@ use crate::workflow::{InputDef, ManagerConfig, OutputDef, PlanningConfig, Proces
 
 use super::*;
 
-fn make_engine<F>(handler: F) -> WorkflowEngine
+async fn make_engine<F>(handler: F) -> WorkflowEngine
 where
     F: Fn(&str, &str, Option<Value>, &str, &str) -> Result<Value, tavern_core::RuntimeError>
         + Send
@@ -34,6 +34,7 @@ instructions: test
     )
     .unwrap();
     hero.load_agent(dir.path().join("agent.yaml").as_path())
+        .await
         .unwrap();
 
     WorkflowEngine::new(Arc::new(hero))
@@ -74,7 +75,7 @@ fn simple_workflow() -> Workflow {
 #[tokio::test]
 async fn test_run_success() {
     let engine =
-        make_engine(|_agent_id, _task, _context, _system_prompt, _model| Ok(json!("done")));
+        make_engine(|_agent_id, _task, _context, _system_prompt, _model| Ok(json!("done"))).await;
     let wf = simple_workflow();
     let result = engine.run(&wf, json!({"input": "hello"})).await.unwrap();
 
@@ -90,7 +91,7 @@ async fn test_run_success() {
 #[tokio::test]
 async fn test_run_missing_input() {
     let engine =
-        make_engine(|_agent_id, _task, _context, _system_prompt, _model| Ok(json!("done")));
+        make_engine(|_agent_id, _task, _context, _system_prompt, _model| Ok(json!("done"))).await;
     let wf = simple_workflow();
     let err = engine.run(&wf, json!({})).await.unwrap_err();
     assert!(matches!(err, CompError::MissingInput { name } if name == "input"));
@@ -99,7 +100,7 @@ async fn test_run_missing_input() {
 #[tokio::test]
 async fn test_run_agent_not_found() {
     let engine =
-        make_engine(|_agent_id, _task, _context, _system_prompt, _model| Ok(json!("done")));
+        make_engine(|_agent_id, _task, _context, _system_prompt, _model| Ok(json!("done"))).await;
     let mut wf = simple_workflow();
     wf.steps[0].agent_id = "unknown".to_string();
     let err = engine.run(&wf, json!({"input": "x"})).await.unwrap_err();
@@ -113,7 +114,7 @@ async fn test_run_step_failure() {
             status: 500,
             body: "boom".to_string(),
         })
-    });
+    }).await;
     let wf = simple_workflow();
     let err = engine.run(&wf, json!({"input": "x"})).await.unwrap_err();
     assert!(
@@ -158,6 +159,7 @@ instructions: test
     )
     .unwrap();
     hero.load_agent(dir.path().join("agent.yaml").as_path())
+        .await
         .unwrap();
 
     let engine = WorkflowEngine::new(Arc::new(hero));
@@ -172,7 +174,7 @@ instructions: test
 #[tokio::test]
 async fn test_run_outputs_validation() {
     let engine =
-        make_engine(|_agent_id, _task, _context, _system_prompt, _model| Ok(json!("done")));
+        make_engine(|_agent_id, _task, _context, _system_prompt, _model| Ok(json!("done"))).await;
     let mut wf = simple_workflow();
     wf.outputs.push(OutputDef {
         name: "bad".to_string(),
@@ -192,7 +194,7 @@ async fn test_run_pipeline() {
         } else {
             Ok(json!("final article"))
         }
-    });
+    }).await;
 
     let wf = Workflow {
         id: "pipeline".to_string(),
@@ -275,7 +277,7 @@ async fn test_run_retry_success() {
         } else {
             Ok(json!("success"))
         }
-    });
+    }).await;
 
     let mut wf = simple_workflow();
     wf.steps[0].retries = Some(2);
@@ -300,7 +302,7 @@ async fn test_run_retry_exhausted() {
             status: 500,
             body: "always fail".to_string(),
         })
-    });
+    }).await;
 
     let mut wf = simple_workflow();
     wf.steps[0].retries = Some(2);
@@ -327,7 +329,7 @@ async fn test_run_retry_with_delay() {
         } else {
             Ok(json!("ok"))
         }
-    });
+    }).await;
 
     let mut wf = simple_workflow();
     wf.steps[0].retries = Some(1);
@@ -392,6 +394,7 @@ instructions: test
     )
     .unwrap();
     hero.load_agent(dir.path().join("agent.yaml").as_path())
+        .await
         .unwrap();
 
     let engine = WorkflowEngine::new(Arc::new(hero));
@@ -496,6 +499,7 @@ instructions: test
     )
     .unwrap();
     hero.load_agent(dir.path().join("agent.yaml").as_path())
+        .await
         .unwrap();
 
     let engine = WorkflowEngine::new(Arc::new(hero)).with_max_concurrency(2);
@@ -620,6 +624,7 @@ instructions: test
     )
     .unwrap();
     hero.load_agent(dir.path().join("agent.yaml").as_path())
+        .await
         .unwrap();
 
     let engine = WorkflowEngine::new(Arc::new(hero));
@@ -679,7 +684,7 @@ instructions: test
 
 // ── Hierarchical Process tests ──
 
-fn make_hierarchical_engine<F>(handler: F) -> WorkflowEngine
+async fn make_hierarchical_engine<F>(handler: F) -> WorkflowEngine
 where
     F: Fn(&str, &str, Option<Value>, &str, &str) -> Result<Value, tavern_core::RuntimeError>
         + Send
@@ -716,7 +721,7 @@ instructions: test
 "#,
     )
     .unwrap();
-    hero.load_from_dir(dir.path()).unwrap();
+    hero.load_from_dir(dir.path()).await.unwrap();
 
     WorkflowEngine::new(Arc::new(hero))
 }
@@ -780,7 +785,7 @@ async fn test_hierarchical_delegate_then_done() {
         } else {
             Ok(json!("step result"))
         }
-    });
+    }).await;
 
     let wf = hierarchical_workflow();
     let result = engine.run(&wf, json!({})).await.unwrap();
@@ -816,7 +821,7 @@ async fn test_hierarchical_all_steps() {
         } else {
             Ok(json!("step result"))
         }
-    });
+    }).await;
 
     let wf = hierarchical_workflow();
     let result = engine.run(&wf, json!({})).await.unwrap();
@@ -841,7 +846,7 @@ async fn test_hierarchical_manager_loop_exceeded() {
         } else {
             Ok(json!("step result"))
         }
-    });
+    }).await;
 
     let wf = hierarchical_workflow();
     let err = engine.run(&wf, json!({})).await.unwrap_err();
@@ -859,7 +864,7 @@ async fn test_hierarchical_manager_unknown_task_id() {
         } else {
             Ok(json!("step result"))
         }
-    });
+    }).await;
 
     let wf = hierarchical_workflow();
     let err = engine.run(&wf, json!({})).await.unwrap_err();
@@ -884,7 +889,7 @@ async fn test_hierarchical_manager_non_json_response_with_retry() {
         } else {
             Ok(json!("step result"))
         }
-    });
+    }).await;
 
     let wf = hierarchical_workflow();
     let result = engine.run(&wf, json!({})).await.unwrap();
@@ -923,7 +928,7 @@ async fn test_planning_injects_context_into_task() {
             // Step execution
             Ok(json!("done"))
         }
-    });
+    }).await;
 
     let mut wf = simple_workflow();
     wf.planning = Some(PlanningConfig {
@@ -945,7 +950,7 @@ async fn test_planning_disabled_skips_planner() {
     let engine = make_engine(move |_agent_id, _task, _context, _sp, _model| {
         cc.fetch_add(1, Ordering::SeqCst);
         Ok(json!("done"))
-    });
+    }).await;
 
     let mut wf = simple_workflow();
     wf.planning = Some(PlanningConfig {
@@ -965,7 +970,7 @@ async fn test_planning_error_fails_workflow() {
             status: 500,
             body: "planner failed".to_string(),
         })
-    });
+    }).await;
 
     let mut wf = simple_workflow();
     wf.planning = Some(PlanningConfig {
@@ -982,7 +987,7 @@ async fn test_planning_error_fails_workflow() {
 #[tokio::test]
 async fn test_start_and_await_completion_equivalent_to_run() {
     let engine =
-        make_engine(|_agent_id, _task, _context, _system_prompt, _model| Ok(json!("done")));
+        make_engine(|_agent_id, _task, _context, _system_prompt, _model| Ok(json!("done"))).await;
     let wf = simple_workflow();
 
     let run_result = engine.run(&wf, json!({"input": "hello"})).await.unwrap();
@@ -1009,7 +1014,7 @@ async fn test_signal_wait_and_resume() {
     let engine = make_engine(move |_agent_id, _task, _context, _system_prompt, _model| {
         cc.fetch_add(1, Ordering::SeqCst);
         Ok(json!("step_done"))
-    });
+    }).await;
 
     let mut wf = simple_workflow();
     wf.steps[0].wait_for_signal = Some("approve".to_string());
@@ -1049,7 +1054,7 @@ async fn test_signal_timeout_fails_workflow() {
     use std::time::Duration;
 
     let engine =
-        make_engine(|_agent_id, _task, _context, _system_prompt, _model| Ok(json!("done")));
+        make_engine(|_agent_id, _task, _context, _system_prompt, _model| Ok(json!("done"))).await;
 
     let mut wf = simple_workflow();
     wf.steps[0].wait_for_signal = Some("approve".to_string());
@@ -1110,6 +1115,7 @@ instructions: test
     )
     .unwrap();
     hero.load_agent(dir.path().join("agent.yaml").as_path())
+        .await
         .unwrap();
 
     let engine = WorkflowEngine::new(Arc::new(hero));
