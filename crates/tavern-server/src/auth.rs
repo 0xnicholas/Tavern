@@ -19,7 +19,7 @@ pub(crate) struct SseQuery {
     api_key: Option<String>,
 }
 
-pub async fn auth_middleware(
+pub(crate) async fn auth_middleware(
     Query(query): Query<SseQuery>,
     headers: HeaderMap,
     req: Request,

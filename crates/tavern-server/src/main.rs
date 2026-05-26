@@ -8,12 +8,7 @@ use tavern_core::Runtime;
 use tavern_hero::TavernHero;
 use tracing::info;
 
-mod auth;
-mod handlers;
-mod router;
-mod shutdown;
-mod sse;
-mod state;
+use tavern_server::{router, shutdown, state};
 
 #[tokio::main]
 async fn main() {
@@ -217,8 +212,8 @@ mod tests {
     use tavern_core::Runtime;
     use tavern_hero::TavernHero;
 
-    use crate::router;
-    use crate::state::AppState;
+    use tavern_server::router;
+    use tavern_server::state::AppState;
 
     fn default_workflow() -> tavern_comp::Workflow {
         tavern_comp::Workflow {
