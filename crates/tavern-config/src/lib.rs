@@ -28,6 +28,7 @@ impl TavernConfig {
     /// 2. `config.toml`
     /// 3. V0.1.0 兼容环境变量（RUNTIME_URL 等）
     /// 4. 默认值
+    #[allow(clippy::result_large_err)]
     pub fn load() -> Result<Self, figment::Error> {
         let mut figment = Figment::new();
 

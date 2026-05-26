@@ -170,7 +170,7 @@ instructions: 研究
 "#,
         )
         .unwrap();
-        hero.load_agent(&path).unwrap();
+        hero.load_agent(&path).await.unwrap();
 
         let result = hero.execute("researcher", "task", None).await.unwrap();
         assert_eq!(result, json!({"result": "ok"}));
@@ -208,9 +208,9 @@ instructions: test
         )
         .unwrap();
 
-        hero.load_from_dir(dir.path()).unwrap();
-        assert_eq!(hero.list_agents().len(), 1);
-        assert_eq!(hero.list_agents_summary()[0].id, "a");
+        hero.load_from_dir(dir.path()).await.unwrap();
+        assert_eq!(hero.list_agents().await.len(), 1);
+        assert_eq!(hero.list_agents_summary().await[0].id, "a");
     }
 
     // ---------- Concurrency safety tests ----------
@@ -238,17 +238,17 @@ instructions: test
 
         let hero_load = hero.clone();
         let dir_path = dir.path().to_path_buf();
-        let load_handle = std::thread::spawn(move || {
-            hero_load.load_from_dir(&dir_path).unwrap();
+        let load_handle = tokio::spawn(async move {
+            hero_load.load_from_dir(&dir_path).await.unwrap();
         });
 
         // 在加载的同时反复查询注册表
         for _ in 0..100 {
-            let _ = hero.list_agents_summary();
-            let _ = hero.get_agent("concurrent_agent");
+            let _ = hero.list_agents_summary().await;
+            let _ = hero.get_agent("concurrent_agent").await;
         }
 
-        load_handle.join().unwrap();
+        load_handle.await.unwrap();
 
         // 加载完成后应能正常执行
         let result = hero
