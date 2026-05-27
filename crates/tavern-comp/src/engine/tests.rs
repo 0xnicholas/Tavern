@@ -1153,3 +1153,163 @@ instructions: test
         err
     );
 }
+
+// ── Checkpoint Recovery 测试 ──
+
+fn signal_workflow() -> Workflow {
+    Workflow {
+        id: "recovery_test".to_string(),
+        name: "Recovery Test".to_string(),
+        description: None,
+        process: Process::Sequential,
+        planning: None,
+        inputs: vec![],
+        outputs: vec![],
+        steps: vec![Step {
+            id: "s1".to_string(),
+            agent_id: "test_agent".to_string(),
+            task: "do something".to_string(),
+            depends_on: vec![],
+            output_key: None,
+            timeout: None,
+            retries: None,
+            retry_delay: None,
+            wait_for_signal: Some("approve".to_string()),
+            signal_timeout: None,
+            expected_output: None,
+        }],
+    }
+}
+
+/// 验证 recover() 可从 Event Log 重建状态并从中断点继续执行。
+#[tokio::test]
+async fn test_recover_after_signal_wait_resumes() {
+    let engine = make_engine(|_, _, _, _, _| Ok(json!("done"))).await;
+    // Use MemoryEventStore so events persist even if handle is dropped
+    let store = Arc::new(MemoryEventStore::new());
+    let engine = engine.with_store(store.clone());
+
+    let wf = signal_workflow();
+
+    // 1. 启动工作流
+    let mut handle = engine.start(&wf, json!({})).await.unwrap();
+    let instance_id = handle.id().to_string();
+
+    // 2. 等待进入 WaitingForSignal
+    let mut status = String::new();
+    for _ in 0..50 {
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        let state = handle.query_state(store.as_ref()).await.unwrap();
+        status = state.status.as_str().to_string();
+        if status == "waiting_for_signal" {
+            break;
+        }
+    }
+    assert_eq!(
+        status, "waiting_for_signal",
+        "expected waiting_for_signal, got {}",
+        status
+    );
+
+    // 3. 模拟崩溃：丢弃 handle
+    drop(handle);
+
+    // 4. 恢复
+    let mut recovered = engine
+        .recover(instance_id.clone(), &wf)
+        .await
+        .expect("recover should succeed");
+
+    assert_eq!(recovered.id(), instance_id);
+
+    // 5. 发送信号
+    recovered
+        .signal("approve", json!({"ok": true}))
+        .await
+        .unwrap();
+
+    // 6. 等待完成
+    let result = tokio::time::timeout(Duration::from_secs(5), recovered.await_completion())
+        .await
+        .unwrap()
+        .expect("workflow should complete after recovery");
+
+    assert_eq!(result.context["signals"]["approve"], json!({"ok": true}));
+}
+
+/// 验证 recover() 对已完成的实例返回错误。
+#[tokio::test]
+async fn test_recover_completed_instance_returns_error() {
+    let engine = make_engine(|_, _, _, _, _| Ok(json!("done"))).await;
+    let store = Arc::new(MemoryEventStore::new());
+    let engine = engine.with_store(store.clone());
+
+    let wf = simple_workflow();
+
+    let mut handle = engine.start(&wf, json!({"input": "test"})).await.unwrap();
+    let instance_id = handle.id().to_string();
+
+    // Wait for completion
+    handle.await_completion().await.unwrap();
+
+    // Try to recover completed instance
+    let result = engine.recover(instance_id, &wf).await;
+    assert!(result.is_err());
+    assert!(matches!(
+        result.unwrap_err(),
+        CompError::InstanceClosed { .. }
+    ));
+}
+
+/// 验证 recover() 对不存在的实例返回错误。
+#[tokio::test]
+async fn test_recover_nonexistent_instance_returns_error() {
+    let engine = make_engine(|_, _, _, _, _| Ok(json!("done"))).await;
+    let wf = simple_workflow();
+
+    let result = engine
+        .recover("nonexistent-instance-id".to_string(), &wf)
+        .await;
+    assert!(result.is_err());
+}
+
+/// 验证 store.list_by_status 可用于找到待恢复的 Running 实例。
+#[tokio::test]
+async fn test_list_by_status_finds_running_instances() {
+    let engine = make_engine(|_, _, _, _, _| Ok(json!("done"))).await;
+    let store = Arc::new(MemoryEventStore::new());
+    let engine = engine.with_store(store.clone());
+
+    let wf = signal_workflow();
+    let handle = engine.start(&wf, json!({})).await.unwrap();
+    let instance_id = handle.id().to_string();
+
+    // Wait for WaitingForSignal
+    for _ in 0..50 {
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        let state = handle.query_state(store.as_ref()).await.unwrap();
+        if state.status.as_str() == "waiting_for_signal" {
+            break;
+        }
+    }
+
+    // list_by_status for any WaitingForSignal variant
+    let waiting = store
+        .list_by_status(InstanceStatus::WaitingForSignal {
+            signal: String::new(),
+        })
+        .await
+        .unwrap();
+
+    assert!(
+        !waiting.is_empty() || {
+            // MemoryEventStore uses discriminant matching, so it finds WaitingForSignal instances
+            false
+        },
+        "waiting instances should be findable"
+    );
+
+    // Store still contains events for recovery
+    let events = store.read_stream(&instance_id).await.unwrap();
+    assert!(!events.is_empty());
+}

@@ -452,12 +452,62 @@ impl WorkflowEngine {
         }
     }
 
-    /// 核心：事件循环解释器
+    /// 恢复中断的工作流实例（进程崩溃后重启恢复）。
+    /// 从 Event Log 重建状态，跳过已执行的步骤，从当前断点继续。
+    pub async fn recover(
+        &self,
+        instance_id: String,
+        workflow: &Workflow,
+    ) -> Result<ExecutionHandle, CompError> {
+        let events = self.store.read_stream(&instance_id).await?;
+        if events.is_empty() {
+            return Err(CompError::InstanceNotFound { id: instance_id });
+        }
+
+        let mut state = self.rebuild_state(&instance_id).await?;
+
+        // 检查实例状态
+        match &state.status {
+            InstanceStatus::Completed | InstanceStatus::Failed => {
+                return Err(CompError::InstanceClosed { id: instance_id });
+            }
+            InstanceStatus::Pending => {
+                // 实例创建后未启动（崩溃在 InstanceStarted 之前），补发启动事件
+                self.apply_and_persist(&instance_id, WorkflowEvent::InstanceStarted, &mut state)
+                    .await?;
+            }
+            // Running, WaitingForSignal — 正常，直接从当前状态继续
+            _ => {}
+        }
+
+        let (signal_tx, signal_rx) = mpsc::channel::<WorkflowEvent>(64);
+        let (completion_tx, completion_rx) = tokio::sync::oneshot::channel();
+        let engine = self.clone();
+        let workflow = workflow.clone();
+        let id = instance_id.clone();
+
+        let interpreter_handle = tokio::spawn(async move {
+            let result = engine
+                .run_interpreter_loop(id, workflow, state, signal_rx, completion_tx)
+                .await;
+            if let Err(ref e) = result {
+                tracing::error!(error = %e, "recovered interpreter failed");
+            }
+            result
+        });
+
+        Ok(ExecutionHandle {
+            id: instance_id,
+            signal_tx,
+            interpreter_handle,
+            completion_rx: Some(completion_rx),
+        })
+    }
     async fn run_interpreter(
         &self,
         instance_id: String,
         workflow: Workflow,
-        mut signal_rx: mpsc::Receiver<WorkflowEvent>,
+        signal_rx: mpsc::Receiver<WorkflowEvent>,
         completion_tx: tokio::sync::oneshot::Sender<Result<WorkflowResult, CompError>>,
     ) -> Result<(), CompError> {
         let mut state = self.rebuild_state(&instance_id).await?;
@@ -465,6 +515,19 @@ impl WorkflowEngine {
         self.apply_and_persist(&instance_id, WorkflowEvent::InstanceStarted, &mut state)
             .await?;
 
+        self.run_interpreter_loop(instance_id, workflow, state, signal_rx, completion_tx)
+            .await
+    }
+
+    /// 核心事件循环（不含 InstanceStarted 发射，用于恢复场景）。
+    async fn run_interpreter_loop(
+        &self,
+        instance_id: String,
+        workflow: Workflow,
+        mut state: InstanceState,
+        mut signal_rx: mpsc::Receiver<WorkflowEvent>,
+        completion_tx: tokio::sync::oneshot::Sender<Result<WorkflowResult, CompError>>,
+    ) -> Result<(), CompError> {
         let (internal_tx, mut internal_rx) = mpsc::channel::<WorkflowEvent>(64);
 
         let executor =

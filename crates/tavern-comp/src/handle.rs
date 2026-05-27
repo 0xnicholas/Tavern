@@ -8,6 +8,7 @@ use crate::instance::InstanceState;
 use crate::store::EventStore;
 use crate::workflow::WorkflowResult;
 
+#[derive(Debug)]
 pub struct ExecutionHandle {
     pub id: String,
     pub signal_tx: mpsc::Sender<WorkflowEvent>,

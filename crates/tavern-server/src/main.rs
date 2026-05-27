@@ -109,19 +109,46 @@ async fn main() {
         event_broadcasts.clone(),
     ));
 
-    let app = router::create_router(Arc::new(state::AppState {
-        hero,
-        registry,
+    let execution_handles: Arc<
+        tokio::sync::RwLock<
+            std::collections::HashMap<
+                String,
+                tokio::sync::mpsc::Sender<tavern_comp::WorkflowEvent>,
+            >,
+        >,
+    > = Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new()));
+
+    let app_state = Arc::new(state::AppState {
+        hero: hero.clone(),
+        registry: registry.clone(),
         workflow_config_dir: config.server.workflow_config_dir.clone(),
         workflow_executions: Arc::new(AtomicU64::new(0)),
         workflow_failures: Arc::new(AtomicU64::new(0)),
         workflow_duration_ms_total: Arc::new(AtomicU64::new(0)),
         max_concurrency: config.server.max_workflow_concurrency,
-        event_store,
-        execution_handles: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
-        event_broadcasts,
+        event_store: event_store.clone(),
+        execution_handles: execution_handles.clone(),
+        event_broadcasts: event_broadcasts.clone(),
         config: config.clone(),
-    }));
+    });
+
+    let app = router::create_router(app_state.clone());
+
+    // ── Checkpoint Recovery: 恢复中断的工作流实例 ──
+    {
+        let engine = tavern_comp::WorkflowEngine::new(hero.clone())
+            .with_store(event_store.clone())
+            .with_max_concurrency(config.server.max_workflow_concurrency);
+
+        recover_pending_instances(
+            &engine,
+            &registry,
+            &execution_handles,
+            &event_broadcasts,
+            event_store.as_ref(),
+        )
+        .await;
+    }
 
     let addr: SocketAddr = match format!("{}:{}", config.server.host, config.server.port).parse() {
         Ok(a) => a,
@@ -282,6 +309,128 @@ async fn start_agent_watcher(path: std::path::PathBuf, hero: Arc<TavernHero>, de
                     }
                 }
                 _ => {}
+            }
+        }
+    }
+}
+
+/// 启动时恢复中断的工作流实例（进程崩溃后重启）。
+async fn recover_pending_instances(
+    engine: &tavern_comp::WorkflowEngine,
+    registry: &Arc<tokio::sync::RwLock<tavern_comp::WorkflowRegistry>>,
+    execution_handles: &Arc<
+        tokio::sync::RwLock<
+            std::collections::HashMap<
+                String,
+                tokio::sync::mpsc::Sender<tavern_comp::WorkflowEvent>,
+            >,
+        >,
+    >,
+    broadcasts: &state::EventBroadcasts,
+    store: &dyn tavern_comp::EventStore,
+) {
+    let statuses = [
+        tavern_comp::InstanceStatus::Running,
+        tavern_comp::InstanceStatus::WaitingForSignal {
+            signal: String::new(),
+        },
+    ];
+
+    for status in &statuses {
+        let instances = match store.list_by_status(status.clone()).await {
+            Ok(ids) => ids,
+            Err(e) => {
+                tracing::warn!("failed to list instances for recovery: {}", e);
+                continue;
+            }
+        };
+
+        for instance_id in instances {
+            // 从 Event Log 中提取 workflow_id
+            let events = match store.read_stream(&instance_id).await {
+                Ok(e) => e,
+                Err(e) => {
+                    tracing::warn!("failed to read events for {}: {}", instance_id, e);
+                    continue;
+                }
+            };
+
+            let workflow_id = events.iter().find_map(|e| match e {
+                tavern_comp::WorkflowEvent::InstanceCreated { workflow_id, .. } => {
+                    Some(workflow_id.clone())
+                }
+                _ => None,
+            });
+
+            let workflow_id = match workflow_id {
+                Some(id) => id,
+                None => {
+                    tracing::warn!("no workflow_id found for instance {}", instance_id);
+                    continue;
+                }
+            };
+
+            // 查找 Workflow 定义
+            let workflow = {
+                let reg = registry.read().await;
+                reg.get(&workflow_id).cloned()
+            };
+
+            let workflow = match workflow {
+                Some(w) => w,
+                None => {
+                    tracing::warn!(
+                        "workflow '{}' not found in registry, cannot recover instance {}",
+                        workflow_id,
+                        instance_id
+                    );
+                    continue;
+                }
+            };
+
+            // 恢复实例
+            match engine.recover(instance_id.clone(), &workflow).await {
+                Ok(handle) => {
+                    let signal_tx = handle.signal_tx.clone();
+                    let interpreter = handle.interpreter_handle;
+                    let exec_id = instance_id.clone();
+
+                    // Register signal channel for signal/cancel operations
+                    {
+                        let mut handles = execution_handles.write().await;
+                        handles.insert(instance_id.clone(), signal_tx);
+                    }
+
+                    // Pre-create broadcast sender for SSE
+                    {
+                        let mut bcasts = broadcasts.write().await;
+                        bcasts.entry(instance_id.clone()).or_insert_with(|| {
+                            tokio::sync::broadcast::channel::<tavern_comp::WorkflowEvent>(128).0
+                        });
+                    }
+
+                    // Spawn cleanup on completion
+                    let bcasts = broadcasts.clone();
+                    let handles = execution_handles.clone();
+                    tokio::spawn(async move {
+                        let _ = interpreter.await;
+                        handles.write().await.remove(&exec_id);
+                        bcasts.write().await.remove(&exec_id);
+                    });
+
+                    tracing::info!(
+                        instance_id = %instance_id,
+                        workflow_id = %workflow_id,
+                        "recovered workflow instance",
+                    );
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        instance_id = %instance_id,
+                        error = %e,
+                        "failed to recover instance",
+                    );
+                }
             }
         }
     }
