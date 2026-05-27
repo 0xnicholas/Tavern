@@ -6,6 +6,7 @@ pub mod executor;
 pub mod handle;
 pub mod instance;
 pub mod registry;
+pub mod replay;
 pub mod store;
 pub mod timer;
 pub mod validator;
@@ -19,6 +20,9 @@ pub use executor::StepExecutor;
 pub use handle::ExecutionHandle;
 pub use instance::{InstanceState, InstanceStatus};
 pub use registry::{WorkflowRegistry, WorkflowSummary};
+pub use replay::{
+    ExecutionReplay, ExecutionReplayer, ReplayOptions, ReplaySummary, StateDiff, TimelineEntry,
+};
 #[cfg(feature = "postgres")]
 pub use store::PostgreSQLEventStore;
 #[cfg(feature = "sqlite")]
