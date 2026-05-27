@@ -227,6 +227,7 @@ pub struct FlowEngine<F> {
     flow: F,
     graph: FlowGraph,
     store: Option<Arc<dyn tavern_comp::EventStore>>,
+    max_concurrency: usize,
 }
 
 impl<F: Flow + FlowDispatch + Send + 'static> FlowEngine<F> {
@@ -237,11 +238,17 @@ impl<F: Flow + FlowDispatch + Send + 'static> FlowEngine<F> {
             flow,
             graph,
             store: None,
+            max_concurrency: 1,
         }
     }
 
     pub fn with_store(mut self, store: Arc<dyn tavern_comp::EventStore>) -> Self {
         self.store = Some(store);
+        self
+    }
+
+    pub fn with_max_concurrency(mut self, n: usize) -> Self {
+        self.max_concurrency = n.max(1);
         self
     }
 
