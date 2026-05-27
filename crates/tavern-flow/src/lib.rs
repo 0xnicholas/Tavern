@@ -26,6 +26,7 @@ use std::sync::Arc;
 
 pub use tavern_flow_macros::{flow_impl, listen, router, start, Flow};
 
+pub mod event;
 pub mod registry;
 pub use registry::{FlowFactory, FlowRegistry, StartableFlow};
 
@@ -225,13 +226,23 @@ impl FlowGraph {
 pub struct FlowEngine<F> {
     flow: F,
     graph: FlowGraph,
+    store: Option<Arc<dyn tavern_comp::EventStore>>,
 }
 
 impl<F: Flow + FlowDispatch + Send + 'static> FlowEngine<F> {
     pub fn new(flow: F) -> Self {
         let meta = F::metadata();
         let graph = FlowGraph::from_metadata(&meta);
-        Self { flow, graph }
+        Self {
+            flow,
+            graph,
+            store: None,
+        }
+    }
+
+    pub fn with_store(mut self, store: Arc<dyn tavern_comp::EventStore>) -> Self {
+        self.store = Some(store);
+        self
     }
 
     /// 异步启动 flow（非阻塞），返回 FlowHandle 用于等待结果。
@@ -287,6 +298,16 @@ impl<F: Flow + FlowDispatch + Send + 'static> FlowEngine<F> {
             return Err(FlowError::Other("no start methods found".to_string()));
         }
 
+        // Emit FlowStarted event
+        self.persist_event(
+            "flow",
+            &crate::event::FlowEvent::FlowStarted {
+                flow_name: "unnamed".to_string(),
+                inputs: serde_json::Value::Null,
+                started_at: chrono::Utc::now(),
+            },
+        );
+
         let mut pending: std::collections::VecDeque<String> = starts.into();
         let mut outputs: HashMap<String, serde_json::Value> = HashMap::new();
         let mut last_output: Option<serde_json::Value> = None;
@@ -302,6 +323,14 @@ impl<F: Flow + FlowDispatch + Send + 'static> FlowEngine<F> {
                 Ok(output) => {
                     last_output = Some(output.clone());
                     outputs.insert(method_name.clone(), output.clone());
+                    self.persist_event(
+                        "flow",
+                        &crate::event::FlowEvent::MethodCompleted {
+                            method_name: method_name.clone(),
+                            output: output.clone(),
+                            completed_at: chrono::Utc::now(),
+                        },
+                    );
 
                     // Check if this method has a router
                     if let Some(router_name) =
@@ -311,17 +340,26 @@ impl<F: Flow + FlowDispatch + Send + 'static> FlowEngine<F> {
                         let router_input = output.clone();
                         match self.flow.dispatch(&router_name, router_input.clone()).await {
                             Ok(label_val) => {
-                                let label = label_val.as_str().unwrap_or("").to_string();
-                                outputs.insert(router_name.clone(), label_val);
+                                outputs.insert(router_name.clone(), label_val.clone());
 
-                                // Label listeners receive the router's input
-                                // (same content the router received), not the label
-                                outputs.insert(label.clone(), router_input);
+                                // Handle single label (String) or multi-label (Array)
+                                let labels: Vec<String> = match &label_val {
+                                    serde_json::Value::String(s) => vec![s.clone()],
+                                    serde_json::Value::Array(arr) => arr
+                                        .iter()
+                                        .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                                        .collect(),
+                                    _ => vec![],
+                                };
 
-                                // Trigger label listeners
-                                let listeners = self.graph.listeners_for_label(&label);
-                                for n in listeners {
-                                    pending.push_back(n);
+                                for label in &labels {
+                                    // Label listeners receive the router's input
+                                    outputs.insert(label.clone(), router_input.clone());
+                                    // Trigger label listeners
+                                    let listeners = self.graph.listeners_for_label(label);
+                                    for n in listeners {
+                                        pending.push_back(n);
+                                    }
                                 }
                             }
                             Err(e) => return Err(e),
@@ -339,6 +377,12 @@ impl<F: Flow + FlowDispatch + Send + 'static> FlowEngine<F> {
         }
 
         Ok(last_output.unwrap_or(serde_json::Value::Null))
+    }
+
+    async fn persist_event(&self, flow_id: &str, event: &crate::event::FlowEvent) {
+        if let Some(ref store) = self.store {
+            let _ = store.append(flow_id, event.to_workflow_event()).await;
+        }
     }
 }
 

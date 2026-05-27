@@ -213,6 +213,9 @@ impl InstanceState {
             WorkflowEvent::WorkflowFailed { .. } => {
                 self.status = InstanceStatus::Failed;
             }
+            WorkflowEvent::External { .. } => {
+                // External events are stored for audit but don't affect workflow state
+            }
         }
         Ok(())
     }

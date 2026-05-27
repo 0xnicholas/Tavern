@@ -224,22 +224,31 @@ pub fn flow_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
                         quote! { self.#method_name() }
                     };
 
-                    // Generate wrapper (router vs normal)
-                    let wrapper = if is_router {
-                        if has_input {
-                            quote! {
-                                async fn #wrapper_name(&mut self, #(#wrapper_inputs),*) -> std::result::Result<serde_json::Value, #crate_path::FlowError> {
-                                    let label = #call.await;
-                                    Ok(serde_json::Value::String(label))
-                                }
+                    // Detect router return type
+                    let router_returns_vec = is_router && {
+                        if let syn::ReturnType::Type(_, ty) = &method.sig.output {
+                            if let Type::Path(tp) = ty.as_ref() {
+                                let s = quote! { #tp }.to_string();
+                                s.contains("Vec") && s.contains("String")
+                            } else {
+                                false
                             }
                         } else {
-                            quote! {
-                                async fn #wrapper_name(&mut self) -> std::result::Result<serde_json::Value, #crate_path::FlowError> {
-                                    let label = #call.await;
-                                    Ok(serde_json::Value::String(label))
-                                }
-                            }
+                            false
+                        }
+                    };
+
+                    // Generate wrapper (router vs normal)
+                    let wrapper = if is_router {
+                        let body = if router_returns_vec {
+                            quote! { let labels: Vec<String> = #call.await; Ok(serde_json::Value::Array(labels.into_iter().map(serde_json::Value::String).collect())) }
+                        } else {
+                            quote! { let label = #call.await; Ok(serde_json::Value::String(label)) }
+                        };
+                        if has_input {
+                            quote! { async fn #wrapper_name(&mut self, #(#wrapper_inputs),*) -> std::result::Result<serde_json::Value, #crate_path::FlowError> { #body } }
+                        } else {
+                            quote! { async fn #wrapper_name(&mut self) -> std::result::Result<serde_json::Value, #crate_path::FlowError> { #body } }
                         }
                     } else if has_input {
                         quote! {

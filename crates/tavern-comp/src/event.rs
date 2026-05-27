@@ -70,4 +70,10 @@ pub enum WorkflowEvent {
         reason: String,
         failed_at: DateTime<Utc>,
     },
+
+    /// 外部事件（Flow 事件、自定义事件等）
+    External {
+        event_type: String,
+        payload: Value,
+    },
 }
