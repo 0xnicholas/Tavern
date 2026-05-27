@@ -368,6 +368,16 @@ fn event_step_id(event: &WorkflowEvent) -> Option<&str> {
     }
 }
 
+fn step_status_str(status: &crate::workflow::StepStatus) -> String {
+    match status {
+        crate::workflow::StepStatus::Pending => "Pending",
+        crate::workflow::StepStatus::Running => "Running",
+        crate::workflow::StepStatus::Completed => "Completed",
+        crate::workflow::StepStatus::Failed => "Failed",
+    }
+    .to_string()
+}
+
 fn compute_state_diff(
     before: &InstanceState,
     after: &InstanceState,
@@ -390,24 +400,26 @@ fn compute_state_diff(
         }
     }
 
-    // Step status transitions
+    // Step status transitions — derive from actual state, not hardcoded from event type
     match event {
         WorkflowEvent::InstanceStarted => {
             diff.step_status_before = Some("Pending".to_string());
             diff.step_status_after = Some("Running".to_string());
         }
-        WorkflowEvent::StepStarted { .. } => {
-            diff.step_status_before = Some("Pending".to_string());
-            diff.step_status_after = Some("Running".to_string());
-        }
-        WorkflowEvent::StepCompleted { output, .. } => {
-            diff.step_status_before = Some("Running".to_string());
-            diff.step_status_after = Some("Completed".to_string());
-            diff.output_preview = Some(truncate_preview(output));
-        }
-        WorkflowEvent::StepFailed { .. } => {
-            diff.step_status_before = Some("Running".to_string());
-            diff.step_status_after = Some("Failed".to_string());
+        WorkflowEvent::StepStarted { step_id, .. }
+        | WorkflowEvent::StepCompleted { step_id, .. }
+        | WorkflowEvent::StepFailed { step_id, .. } => {
+            diff.step_status_before = before
+                .step_results
+                .get(step_id)
+                .map(|r| step_status_str(&r.status));
+            diff.step_status_after = after
+                .step_results
+                .get(step_id)
+                .map(|r| step_status_str(&r.status));
+            if let WorkflowEvent::StepCompleted { output, .. } = event {
+                diff.output_preview = Some(truncate_preview(output));
+            }
         }
         WorkflowEvent::SignalReceived { .. } => {
             diff.step_status_before = Some("WaitingForSignal".to_string());
