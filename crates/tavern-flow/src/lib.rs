@@ -983,6 +983,9 @@ mod tests {
 
         static CONCURRENT: AtomicBool = AtomicBool::new(false);
 
+        // Reset
+        CONCURRENT.store(false, std::sync::atomic::Ordering::SeqCst);
+
         #[derive(Flow)]
         struct ParallelPipeline;
 
@@ -990,10 +993,8 @@ mod tests {
         impl ParallelPipeline {
             #[start]
             async fn slow_a(&mut self) -> Result<String, FlowError> {
-                tokio::time::sleep(Duration::from_millis(100)).await;
-                // Mark that we reached the sleep point
                 CONCURRENT.store(true, std::sync::atomic::Ordering::SeqCst);
-                tokio::time::sleep(Duration::from_millis(100)).await;
+                tokio::time::sleep(Duration::from_millis(200)).await;
                 Ok("a".into())
             }
 
