@@ -3,16 +3,12 @@
 //! ## 使用示例
 //!
 //! ```ignore
-//! use tavern_flow_macros::{Flow, flow_impl, start, listen};
-//!
-//! #[derive(Clone, serde::Serialize, serde::Deserialize)]
-//! struct MyState { value: String }
+//! use tavern_flow::{Flow, flow_impl, start, listen, FlowEngine};
 //!
 //! #[derive(Flow)]
-//! #[flow(state = MyState)]
-//! struct MyPipeline { hero: Arc<TavernHero> }
+//! struct MyPipeline { state: MyState }
 //!
-//! #[flow_impl]
+//! #[flow_impl(crate = "tavern_flow")]
 //! impl MyPipeline {
 //!     #[start]
 //!     async fn step_a(&mut self) -> Result<String, FlowError> { ... }
@@ -20,6 +16,9 @@
 //!     #[listen("step_a")]
 //!     async fn step_b(&mut self, data: String) -> Result<String, FlowError> { ... }
 //! }
+//!
+//! let mut engine = FlowEngine::new(pipeline);
+//! let result = engine.execute(json!({})).await?;
 //! ```
 
 use std::collections::HashMap;
@@ -28,15 +27,11 @@ pub use tavern_flow_macros::{flow_impl, listen, router, start, Flow};
 
 /// Flow 元数据。
 #[derive(Debug, Clone)]
+#[derive(Default)]
 pub struct FlowMetadata {
     pub methods: Vec<MethodInfo>,
 }
 
-impl Default for FlowMetadata {
-    fn default() -> Self {
-        Self { methods: vec![] }
-    }
-}
 
 /// 单个方法的元数据。
 #[derive(Debug, Clone)]

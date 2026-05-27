@@ -4,7 +4,7 @@ use proc_macro::TokenStream;
 use quote::{format_ident, quote};
 use syn::{
     parse_macro_input, punctuated::Punctuated, spanned::Spanned, token::Comma, Attribute,
-    DeriveInput, FnArg, ImplItem, ItemImpl, LitStr, Pat, Type,
+    DeriveInput, FnArg, ImplItem, ItemImpl, Pat, Type,
 };
 
 // ── Helpers ──
@@ -73,10 +73,15 @@ enum Func {
 impl syn::parse::Parse for ListenCall {
     fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
         let func_ident: syn::Ident = input.parse()?;
-        let func = if func_ident == "or" {
-            Func::Or
-        } else {
-            Func::And
+        let func = match func_ident.to_string().as_str() {
+            "or" => Func::Or,
+            "and" => Func::And,
+            other => {
+                return Err(syn::Error::new(
+                    func_ident.span(),
+                    format!("expected `or` or `and`, got `{}`", other),
+                ));
+            }
         };
 
         let content;
@@ -89,11 +94,15 @@ impl syn::parse::Parse for ListenCall {
     }
 }
 
-/// Strip `#[start]` and `#[listen]` attributes from a method.
+/// Strip `#[start]`, `#[listen]`, and `#[router]` attributes from a method.
 fn strip_flow_attrs(attrs: &[Attribute]) -> Vec<Attribute> {
     attrs
         .iter()
-        .filter(|a| !a.path().is_ident("start") && !a.path().is_ident("listen"))
+        .filter(|a| {
+            !a.path().is_ident("start")
+                && !a.path().is_ident("listen")
+                && !a.path().is_ident("router")
+        })
         .cloned()
         .collect()
 }
@@ -143,7 +152,7 @@ pub fn flow_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
     let mut pass_through: Vec<proc_macro2::TokenStream> = Vec::new();
     let mut wrappers: Vec<proc_macro2::TokenStream> = Vec::new();
 
-    for (idx, item) in input.items.iter().enumerate() {
+    for item in &input.items {
         if let ImplItem::Fn(method) = item {
             let flow_attr = extract_flow_attr(&method.attrs);
 
@@ -232,20 +241,18 @@ pub fn flow_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
                                 }
                             }
                         }
-                    } else {
-                        if has_input {
-                            quote! {
-                                async fn #wrapper_name(&mut self, #(#wrapper_inputs),*) -> std::result::Result<serde_json::Value, #crate_path::FlowError> {
-                                    let result = #call.await?;
-                                    Ok(serde_json::to_value(result).map_err(|e| #crate_path::FlowError::Serialization(e.to_string()))?)
-                                }
+                    } else if has_input {
+                        quote! {
+                            async fn #wrapper_name(&mut self, #(#wrapper_inputs),*) -> std::result::Result<serde_json::Value, #crate_path::FlowError> {
+                                let result = #call.await?;
+                                Ok(serde_json::to_value(result).map_err(|e| #crate_path::FlowError::Serialization(e.to_string()))?)
                             }
-                        } else {
-                            quote! {
-                                async fn #wrapper_name(&mut self) -> std::result::Result<serde_json::Value, #crate_path::FlowError> {
-                                    let result = #call.await?;
-                                    Ok(serde_json::to_value(result).map_err(|e| #crate_path::FlowError::Serialization(e.to_string()))?)
-                                }
+                        }
+                    } else {
+                        quote! {
+                            async fn #wrapper_name(&mut self) -> std::result::Result<serde_json::Value, #crate_path::FlowError> {
+                                let result = #call.await?;
+                                Ok(serde_json::to_value(result).map_err(|e| #crate_path::FlowError::Serialization(e.to_string()))?)
                             }
                         }
                     };
