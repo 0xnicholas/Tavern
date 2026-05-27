@@ -107,7 +107,7 @@ GET /executions/:id/replay
 | `detail` | `low` \| `medium` \| `high` | `medium` | 事件粒度级别 |
 | `from` | ISO8601 | — | 起始时间（可选，含边界） |
 | `to` | ISO8601 | — | 结束时间（可选，含边界） |
-| `step_id` | string | — | 只返回指定步骤的事件（可选） |
+| `step_id` | string | — | 只返回指定步骤的事件（可选）。保留匹配步骤的事件，同时保留无 step_id 的全局生命周期事件（如 InstanceStarted、WorkflowCompleted） |
 
 ### 4.3 Detail 级别定义
 
@@ -315,6 +315,7 @@ crates/tavern-server/src/router.rs        # + GET /executions/:id/replay
 | 逐条重建 state 太慢 | Snapshot + 增量重放 |
 | context diff 计算耗时 | 只比较 keys，不 deep-diff 值 |
 | 重复请求相同 replay | V0.3.1 不加缓存，V0.4.x 考虑 Redis LRU |
+| 时间窗口过滤对无显式时间戳事件不可靠 | InstanceCreated/InstanceStarted/StepScheduled/StepFailed/SignalWaitStarted/TimerFired/External 的事件时间戳回退为 `Utc::now()`，可能导致 `from/to` 过滤不准确 |
 
 ---
 

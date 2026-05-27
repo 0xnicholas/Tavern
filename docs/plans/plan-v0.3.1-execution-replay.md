@@ -297,6 +297,7 @@ impl ExecutionReplayer {
         let mut completed_at: Option<DateTime<Utc>> = None;
         let mut step_start_times: std::collections::HashMap<String, DateTime<Utc>> =
             std::collections::HashMap::new();
+        let mut seen_steps: HashSet<String> = HashSet::new();
 
         for (seq, event) in events.iter().enumerate() {
             let before = state.clone();
@@ -354,7 +355,7 @@ impl ExecutionReplayer {
                     started_at = Some(ts);
                 }
                 WorkflowEvent::StepStarted { step_id, .. } => {
-                    if !summary_has_step(&summary, step_id) {
+                    if seen_steps.insert(step_id.clone()) {
                         summary.total_steps += 1;
                     }
                 }
@@ -497,55 +498,9 @@ fn truncate_preview(value: &Value) -> String {
     }
 }
 
-fn summary_has_step(summary: &ReplaySummary, _step_id: &str) -> bool {
-    // This is a placeholder; in practice we track unique steps separately.
-    // For simplicity, we increment total_steps on every StepStarted and
-    // rely on the caller to not double-count. Actually, let's track it
-    // properly in the replayer.
-    false
-}
 ```
 
-> **Issue:** `summary_has_step` is a stub. We need to actually track unique step IDs. Fix this by adding a `HashSet<String>` in the replayer loop to track seen step IDs.
-
-Replace the summary tracking block in `ExecutionReplayer::replay` with:
-
-```rust
-        let mut seen_steps: HashSet<String> = HashSet::new();
-
-        for (seq, event) in events.iter().enumerate() {
-            // ... existing diff computation ...
-
-            // Track summary
-            match event {
-                WorkflowEvent::InstanceStarted => {
-                    started_at = Some(ts);
-                }
-                WorkflowEvent::StepStarted { step_id, .. } => {
-                    if seen_steps.insert(step_id.clone()) {
-                        summary.total_steps += 1;
-                    }
-                }
-                WorkflowEvent::StepCompleted { .. } => {
-                    summary.completed_steps += 1;
-                }
-                WorkflowEvent::StepFailed { will_retry: false, .. } => {
-                    summary.failed_steps += 1;
-                }
-                WorkflowEvent::StepRetryScheduled { .. } => {
-                    summary.retries_count += 1;
-                }
-                WorkflowEvent::SignalReceived { .. } => {
-                    summary.signals_received += 1;
-                }
-                // ... rest same ...
-            }
-
-            timeline.push(entry);
-        }
-```
-
-Then remove `fn summary_has_step` entirely.
+> **Note:** `seen_steps: HashSet<String>` 在 `ExecutionReplayer::replay` 的局部变量声明处已经初始化，见 Step 4 代码中的 `let mut seen_steps: HashSet<String> = HashSet::new();`。不需要额外的 helper 函数。
 
 - [ ] **Step 6: Wire into lib.rs**
 
@@ -640,13 +595,32 @@ pub async fn replay_execution_handler(
 }
 ```
 
-- [ ] **Step 2: Verify chrono imports in handlers.rs**
+- [ ] **Step 2: Update imports and error mapping in handlers.rs**
 
-Check that `handlers.rs` already imports `chrono::Utc` (it does, from earlier inspection). If not, add:
+Verify `handlers.rs` imports:
 
 ```rust
 use chrono::{DateTime, Utc};
 ```
+
+Add two new arms to `map_comp_error` (before the catch-all `_` arm) to map replay errors to HTTP 400:
+
+```rust
+CompError::InvalidReplayRange { reason } => (
+    StatusCode::BAD_REQUEST,
+    ApiError::new(StatusCode::BAD_REQUEST, "InvalidReplayRange", reason.clone()),
+),
+CompError::InvalidParameter { field, reason } => (
+    StatusCode::BAD_REQUEST,
+    ApiError::new(
+        StatusCode::BAD_REQUEST,
+        "InvalidParameter",
+        format!("{}: {}", field, reason),
+    ),
+),
+```
+
+> **Note:** `map_comp_error` has a catch-all `_` arm mapping to 500, so compilation won't fail without this. But adding explicit arms ensures the correct HTTP 400 status per spec.
 
 - [ ] **Step 3: Add route to router.rs**
 
@@ -686,6 +660,7 @@ Append to `crates/tavern-comp/src/replay.rs`:
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chrono::Duration;
     use crate::store::MemoryEventStore;
     use crate::workflow::{Step, Workflow};
 
@@ -950,23 +925,54 @@ mod tests {
         assert_eq!(diff.step_status_before, Some("Running".to_string()));
         assert_eq!(diff.step_status_after, Some("Completed".to_string()));
     }
+
+    #[tokio::test]
+    async fn test_replay_detail_medium() {
+        let store = MemoryEventStore::new();
+        let events = create_test_events();
+        for event in &events {
+            store.append("exec-8", event.clone()).await.unwrap();
+        }
+
+        let opts = ReplayOptions {
+            detail: DetailLevel::Medium,
+            ..Default::default()
+        };
+        let replay = ExecutionReplayer::replay(&store, "exec-8", opts).await.unwrap();
+
+        // Medium should include StepScheduled but exclude raw_payload
+        let has_scheduled = replay
+            .timeline
+            .iter()
+            .any(|e| e.event_type == "StepScheduled");
+        assert!(has_scheduled);
+
+        let completed = replay
+            .timeline
+            .iter()
+            .find(|e| e.event_type == "StepCompleted")
+            .expect("has completed");
+        assert!(completed.raw_payload.is_none());
+        assert!(completed.state_diff.is_some());
+    }
 }
 ```
 
 - [ ] **Step 2: Fix compilation issues**
 
 Run: `cargo test -p tavern-comp`
-Expected: 8 new tests PASS + existing tests still PASS
+Expected: 9 new tests PASS + existing tests still PASS
 
 - [ ] **Step 3: Commit**
 
 ```bash
 git add crates/tavern-comp/src/replay.rs
-git commit -m "test(replay): add 8 unit tests for ExecutionReplayer
+git commit -m "test(replay): add 9 unit tests for ExecutionReplayer
 
 - test_replay_basic_timeline: verifies timeline order and summary
 - test_replay_detail_low: verifies StepScheduled excluded
 - test_replay_detail_high: verifies raw_payload included
+- test_replay_detail_medium: verifies Signal events and context diff
 - test_replay_time_window: verifies from/to filtering
 - test_replay_step_filter: verifies step_id filtering
 - test_replay_nonexistent_instance: verifies 404
@@ -984,7 +990,7 @@ git commit -m "test(replay): add 8 unit tests for ExecutionReplayer
 ```bash
 cargo test --workspace
 ```
-Expected: 181 tests passed (173 existing + 8 new), 0 failed
+Expected: 182 tests passed (173 existing + 9 new), 0 failed
 
 - [ ] **Step 2: Run clippy**
 
@@ -1015,8 +1021,8 @@ git commit --allow-empty -m "chore: verify all checks pass (test/clippy/fmt)"
 - [ ] `InvalidReplayRange` and `InvalidParameter` added to `CompError`
 - [ ] `GET /executions/:id/replay` route added to `router.rs`
 - [ ] `replay_execution_handler` added to `handlers.rs`
-- [ ] 8 unit tests in `replay.rs` all pass
-- [ ] `cargo test --workspace` shows 181 tests passed
+- [ ] 9 unit tests in `replay.rs` all pass
+- [ ] `cargo test --workspace` shows 182 tests passed
 - [ ] `cargo clippy --workspace` has zero new warnings
 - [ ] `cargo fmt -- --check` is clean
 - [ ] All commits have descriptive messages
