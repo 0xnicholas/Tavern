@@ -1,6 +1,6 @@
 # Tavern V0.3.0: Flow 生产化
 
-> **状态：DRAFT** — 2026-05-26（review round 2 修正）  
+> **状态：FROZEN** — 2026-05-26（review 2 轮，10 个问题全部修复）  
 > 下一阶段：plan 编写后冻结
 
 ## 1. 概述
