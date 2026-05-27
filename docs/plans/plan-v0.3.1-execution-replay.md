@@ -252,15 +252,34 @@ impl ExecutionReplayer {
         opts.validate()?;
 
         // 1. Read all events
-        let mut events = store.read_stream(instance_id).await?;
+        // 1. Read all events from EventStore
+        let all_events = store.read_stream(instance_id).await?;
 
-        if events.is_empty() {
+        if all_events.is_empty() {
             return Err(CompError::InstanceNotFound {
                 id: instance_id.to_string(),
             });
         }
 
-        // 2. Time window filter
+        // 2. Initialize state with InstanceCreated (needed for workflow_id)
+        let mut state = InstanceState {
+            id: instance_id.to_string(),
+            ..Default::default()
+        };
+        for event in &all_events {
+            if let WorkflowEvent::InstanceCreated { .. } = event {
+                state.apply(event)?;
+                break;
+            }
+        }
+
+        // 3. Build filtered timeline events
+        let mut events: Vec<_> = all_events
+            .into_iter()
+            .filter(|e| opts.detail.includes(e))
+            .collect();
+
+        // 4. Time window filter
         if let Some(from) = opts.from {
             events.retain(|e| event_timestamp(e) >= from);
         }
@@ -268,27 +287,9 @@ impl ExecutionReplayer {
             events.retain(|e| event_timestamp(e) <= to);
         }
 
-        // 3. Step filter
+        // 5. Step filter
         if let Some(ref step_id) = opts.step_id {
             events.retain(|e| event_step_id(e).as_ref() == Some(step_id));
-        }
-
-        // 4. Detail level filter
-        events.retain(|e| opts.detail.includes(e));
-
-        // 5. Replay and build timeline
-        let mut state = InstanceState {
-            id: instance_id.to_string(),
-            ..Default::default()
-        };
-
-        // First, apply InstanceCreated to get workflow_id
-        let all_events = store.read_stream(instance_id).await?;
-        for event in &all_events {
-            if let WorkflowEvent::InstanceCreated { .. } = event {
-                state.apply(event)?;
-                break;
-            }
         }
 
         let mut timeline = Vec::new();
@@ -491,8 +492,9 @@ fn compute_state_diff(
 
 fn truncate_preview(value: &Value) -> String {
     let s = value.to_string();
-    if s.len() > 500 {
-        format!("{}...", &s[..497])
+    let chars: Vec<char> = s.chars().collect();
+    if chars.len() > 500 {
+        chars.into_iter().take(497).collect::<String>() + "..."
     } else {
         s
     }
@@ -821,7 +823,7 @@ mod tests {
         // Filter to only events before now (all should pass)
         let opts = ReplayOptions {
             detail: DetailLevel::Medium,
-            to: Some(Utc::now() + chrono::Duration::hours(1)),
+            to: Some(Utc::now() + Duration::hours(1)),
             ..Default::default()
         };
         let replay = ExecutionReplayer::replay(&store, "exec-4", opts).await.unwrap();
@@ -830,7 +832,7 @@ mod tests {
         // Filter to only events after now (should be empty)
         let opts2 = ReplayOptions {
             detail: DetailLevel::Medium,
-            from: Some(Utc::now() + chrono::Duration::hours(1)),
+            from: Some(Utc::now() + Duration::hours(1)),
             ..Default::default()
         };
         let replay2 = ExecutionReplayer::replay(&store, "exec-4", opts2).await.unwrap();
@@ -874,7 +876,7 @@ mod tests {
         }
 
         let opts = ReplayOptions {
-            from: Some(Utc::now() + chrono::Duration::hours(1)),
+            from: Some(Utc::now() + Duration::hours(1)),
             to: Some(Utc::now()),
             ..Default::default()
         };
@@ -897,9 +899,9 @@ mod tests {
             .await
             .unwrap();
 
-        let opts = ReplayOptions::default();
+        let opts = ReplayOptions::default(); // detail=Medium, excludes InstanceCreated
         let replay = ExecutionReplayer::replay(&store, "exec-empty", opts).await.unwrap();
-        assert_eq!(replay.timeline.len(), 1); // Just InstanceCreated
+        assert!(replay.timeline.is_empty()); // Medium excludes InstanceCreated
         assert_eq!(replay.status, "pending");
     }
 

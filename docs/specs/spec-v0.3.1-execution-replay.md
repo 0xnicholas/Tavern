@@ -38,6 +38,7 @@
 pub struct ExecutionReplay {
     pub execution_id: String,
     pub workflow_id: String,
+    /// 实例首次产生 InstanceStarted 事件的时间；若不存在（如空执行），回退为当前 UTC 时间
     pub started_at: DateTime<Utc>,
     pub completed_at: Option<DateTime<Utc>>,
     pub status: String,
@@ -113,7 +114,7 @@ GET /executions/:id/replay
 
 | 级别 | 包含的事件类型 | StateDiff 内容 | raw_payload |
 |------|---------------|---------------|-------------|
-| `low` | InstanceStarted, StepStarted, StepCompleted, StepFailed, WorkflowCompleted, WorkflowFailed | step_status_before/after only | ❌ |
+| `low` | InstanceStarted, StepStarted, StepCompleted, StepFailed, WorkflowCompleted, WorkflowFailed | `step_status_before/after` only; `context_changed: false`, `context_keys_added: []`, `context_keys_modified: []` | ❌ |
 | `medium` | low + SignalReceived, SignalWaitStarted, CancelRequested, StepRetryScheduled | + context_keys_added/modified + output_preview | ❌ |
 | `high` | 全部事件类型 | 完整 StateDiff + output_preview | ✅ |
 
@@ -236,7 +237,6 @@ StateDiff 在逐条重放事件时**增量计算**，而非比较两个完整 JS
 ### 5.3 性能优化
 
 - **时间窗口过滤优先**：`from/to` 参数在读取事件流后立刻过滤，减少后续处理量
-- **Snapshot 回退**：若事件数 > 1000，先尝试 `EventStore::load_snapshot` + 增量重放
 - **Lazy raw_payload**：`detail=high` 时才序列化原始 payload，避免不必要的 JSON 转换
 
 ---
@@ -311,8 +311,8 @@ crates/tavern-server/src/router.rs        # + GET /executions/:id/replay
 
 | 风险 | 缓解 |
 |------|------|
-| 大事件流（>10000 条）导致内存爆炸 | 时间窗口过滤 + Snapshot 回退 |
-| 逐条重建 state 太慢 | Snapshot + 增量重放 |
+| 大事件流（>10000 条）导致内存爆炸 | 时间窗口过滤减少加载量 |
+| 逐条重建 state 太慢 | 仅 diff context keys（不 deep-diff 值） |
 | context diff 计算耗时 | 只比较 keys，不 deep-diff 值 |
 | 重复请求相同 replay | V0.3.1 不加缓存，V0.4.x 考虑 Redis LRU |
 | 时间窗口过滤对无显式时间戳事件不可靠 | InstanceCreated/InstanceStarted/StepScheduled/StepFailed/SignalWaitStarted/TimerFired/External 的事件时间戳回退为 `Utc::now()`，可能导致 `from/to` 过滤不准确 |
