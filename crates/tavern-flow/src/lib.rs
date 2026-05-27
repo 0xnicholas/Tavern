@@ -24,7 +24,7 @@
 
 use std::collections::HashMap;
 
-pub use tavern_flow_macros::{flow_impl, listen, start, Flow};
+pub use tavern_flow_macros::{flow_impl, listen, router, start, Flow};
 
 /// Flow 元数据。
 #[derive(Debug, Clone)]
@@ -43,7 +43,11 @@ impl Default for FlowMetadata {
 pub struct MethodInfo {
     pub name: String,
     pub is_start: bool,
-    /// 监听的方法名列表
+    /// 是否为条件路由器（返回 label 字符串）
+    pub is_router: bool,
+    /// 路由器的上游方法（仅在 is_router 时有效）
+    pub router_for: Option<String>,
+    /// 监听的方法名或 label 名列表
     pub listens_to: Vec<String>,
 }
 
@@ -84,6 +88,10 @@ pub(crate) struct FlowGraph {
     downstream: HashMap<String, Vec<String>>,
     /// 上游依赖计数: method_name -> 未完成的上游数
     in_degree: HashMap<String, usize>,
+    /// 路由器映射: upstream_method_name -> router_method_name
+    routers: HashMap<String, String>,
+    /// 标签监听: label_name -> [监听该 label 的方法名]
+    label_listeners: HashMap<String, Vec<String>>,
 }
 
 impl FlowGraph {
@@ -94,20 +102,43 @@ impl FlowGraph {
             .map(|m| (m.name.clone(), m.clone()))
             .collect();
 
-        // Build downstream map and in-degree
         let mut downstream: HashMap<String, Vec<String>> = HashMap::new();
         let mut in_degree: HashMap<String, usize> = HashMap::new();
+        let mut routers: HashMap<String, String> = HashMap::new();
+        let mut label_listeners: HashMap<String, Vec<String>> = HashMap::new();
 
         for method in &meta.methods {
             downstream.entry(method.name.clone()).or_default();
             in_degree.entry(method.name.clone()).or_insert(0);
 
-            for upstream in &method.listens_to {
-                downstream
-                    .entry(upstream.clone())
-                    .or_default()
-                    .push(method.name.clone());
-                *in_degree.entry(method.name.clone()).or_insert(0) += 1;
+            if method.is_router {
+                if let Some(ref upstream) = method.router_for {
+                    routers.insert(upstream.clone(), method.name.clone());
+                    // Router depends on its upstream
+                    *in_degree.entry(method.name.clone()).or_insert(0) += 1;
+                    downstream
+                        .entry(upstream.clone())
+                        .or_default()
+                        .push(method.name.clone());
+                }
+            } else {
+                for listen_target in &method.listens_to {
+                    // Could be a method name or a label
+                    // If it matches a method name, it's a direct dependency
+                    if nodes.contains_key(listen_target) {
+                        *in_degree.entry(method.name.clone()).or_insert(0) += 1;
+                        downstream
+                            .entry(listen_target.clone())
+                            .or_default()
+                            .push(method.name.clone());
+                    } else {
+                        // It's a label — triggered by router output
+                        label_listeners
+                            .entry(listen_target.clone())
+                            .or_default()
+                            .push(method.name.clone());
+                    }
+                }
             }
         }
 
@@ -115,6 +146,8 @@ impl FlowGraph {
             nodes,
             downstream,
             in_degree,
+            routers,
+            label_listeners,
         }
     }
 
@@ -142,11 +175,24 @@ impl FlowGraph {
         ready
     }
 
-    /// 获取方法的上游输入源（第一个 listens_to）。
+    /// 获取方法的上游输入源（第一个 listens_to 或 router_for）。
     pub fn upstream_for(&self, method_name: &str) -> Option<String> {
-        self.nodes
-            .get(method_name)
-            .and_then(|m| m.listens_to.first().cloned())
+        self.nodes.get(method_name).and_then(|m| {
+            m.listens_to
+                .first()
+                .cloned()
+                .or_else(|| m.router_for.clone())
+        })
+    }
+
+    /// 获取上游方法的 router（如果有）。
+    pub fn router_for(&self, upstream: &str) -> Option<&str> {
+        self.routers.get(upstream).map(|s| s.as_str())
+    }
+
+    /// 获取监听指定 label 的方法列表。
+    pub fn listeners_for_label(&self, label: &str) -> Vec<String> {
+        self.label_listeners.get(label).cloned().unwrap_or_default()
     }
 }
 
@@ -163,7 +209,7 @@ impl<F: Flow + FlowDispatch> FlowEngine<F> {
         Self { flow, graph }
     }
 
-    /// 执行完整 flow（事件循环，顺序执行）。
+    /// 执行完整 flow（事件循环，顺序执行，支持 router）。
     pub async fn execute(
         &mut self,
         _inputs: serde_json::Value,
@@ -178,7 +224,6 @@ impl<F: Flow + FlowDispatch> FlowEngine<F> {
         let mut last_output: Option<serde_json::Value> = None;
 
         while let Some(method_name) = pending.pop_front() {
-            // Determine input: for start methods, use Null; for listeners, use upstream output
             let input = self
                 .graph
                 .upstream_for(&method_name)
@@ -188,11 +233,37 @@ impl<F: Flow + FlowDispatch> FlowEngine<F> {
             match self.flow.dispatch(&method_name, input).await {
                 Ok(output) => {
                     last_output = Some(output.clone());
-                    outputs.insert(method_name.clone(), output);
+                    outputs.insert(method_name.clone(), output.clone());
 
-                    let next = self.graph.on_complete(&method_name);
-                    for n in next {
-                        pending.push_back(n);
+                    // Check if this method has a router
+                    if let Some(router_name) =
+                        self.graph.router_for(&method_name).map(|s| s.to_string())
+                    {
+                        // Execute router to determine the label
+                        let router_input = output.clone();
+                        match self.flow.dispatch(&router_name, router_input.clone()).await {
+                            Ok(label_val) => {
+                                let label = label_val.as_str().unwrap_or("").to_string();
+                                outputs.insert(router_name.clone(), label_val);
+
+                                // Label listeners receive the router's input
+                                // (same content the router received), not the label
+                                outputs.insert(label.clone(), router_input);
+
+                                // Trigger label listeners
+                                let listeners = self.graph.listeners_for_label(&label);
+                                for n in listeners {
+                                    pending.push_back(n);
+                                }
+                            }
+                            Err(e) => return Err(e),
+                        }
+                    } else {
+                        // Normal flow: trigger downstream methods
+                        let next = self.graph.on_complete(&method_name);
+                        for n in next {
+                            pending.push_back(n);
+                        }
                     }
                 }
                 Err(e) => return Err(e),
@@ -232,11 +303,15 @@ mod tests {
                 MethodInfo {
                     name: "step_a".to_string(),
                     is_start: true,
+                    is_router: false,
+                    router_for: None,
                     listens_to: vec![],
                 },
                 MethodInfo {
                     name: "step_b".to_string(),
                     is_start: false,
+                    is_router: false,
+                    router_for: None,
                     listens_to: vec!["step_a".to_string()],
                 },
             ],
@@ -326,11 +401,15 @@ mod tests {
                     MethodInfo {
                         name: "step_a".to_string(),
                         is_start: true,
+                        is_router: false,
+                        router_for: None,
                         listens_to: vec![],
                     },
                     MethodInfo {
                         name: "step_b".to_string(),
                         is_start: false,
+                        is_router: false,
+                        router_for: None,
                         listens_to: vec!["step_a".to_string()],
                     },
                 ],
@@ -459,5 +538,69 @@ mod tests {
             .await
             .expect("event loop should complete");
         assert_eq!(result, serde_json::json!("echo: result_one"));
+    }
+
+    /// FlowEngine 事件循环 + router 条件分支。
+    #[tokio::test]
+    async fn test_flow_engine_with_router() {
+        use tavern_flow_macros::router;
+
+        #[derive(Flow)]
+        struct RouterPipeline {
+            state: RouterState,
+        }
+
+        #[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
+        struct RouterState {
+            approved: bool,
+            result: Option<String>,
+        }
+
+        #[flow_impl(crate = "crate")]
+        impl RouterPipeline {
+            #[start]
+            async fn process(&mut self) -> Result<String, FlowError> {
+                Ok("draft_content".to_string())
+            }
+
+            #[router("process")]
+            async fn gate(&mut self, content: String) -> String {
+                if content.len() > 5 {
+                    self.state.approved = true;
+                    "approved".to_string()
+                } else {
+                    "rejected".to_string()
+                }
+            }
+
+            #[listen("approved")]
+            async fn on_approved(&mut self, data: String) -> Result<String, FlowError> {
+                self.state.result = Some(format!("published: {}", data));
+                Ok(format!("OK: {}", data))
+            }
+
+            #[listen("rejected")]
+            async fn on_rejected(&mut self, data: String) -> Result<String, FlowError> {
+                self.state.result = Some(format!("returned: {}", data));
+                Ok(format!("NO: {}", data))
+            }
+        }
+
+        let pipeline = RouterPipeline {
+            state: RouterState::default(),
+        };
+
+        let mut engine = FlowEngine::new(pipeline);
+        let result = engine
+            .execute(serde_json::Value::Null)
+            .await
+            .expect("router flow should complete");
+
+        assert!(engine.flow.state.approved);
+        assert_eq!(
+            engine.flow.state.result.as_deref(),
+            Some("published: draft_content")
+        );
+        assert_eq!(result, serde_json::json!("OK: draft_content"));
     }
 }

@@ -19,6 +19,11 @@ fn extract_flow_attr(attrs: &[Attribute]) -> Option<FlowMethodAttr> {
                 return Some(FlowMethodAttr::Listen(lit.value()));
             }
         }
+        if attr.path().is_ident("router") {
+            if let Ok(lit) = attr.parse_args::<syn::LitStr>() {
+                return Some(FlowMethodAttr::Router(lit.value()));
+            }
+        }
     }
     None
 }
@@ -26,6 +31,7 @@ fn extract_flow_attr(attrs: &[Attribute]) -> Option<FlowMethodAttr> {
 enum FlowMethodAttr {
     Start,
     Listen(String),
+    Router(String), // upstream method name
 }
 
 /// Strip `#[start]` and `#[listen]` attributes from a method.
@@ -52,6 +58,11 @@ pub fn start(_attr: TokenStream, item: TokenStream) -> TokenStream {
 
 #[proc_macro_attribute]
 pub fn listen(_attr: TokenStream, item: TokenStream) -> TokenStream {
+    item
+}
+
+#[proc_macro_attribute]
+pub fn router(_attr: TokenStream, item: TokenStream) -> TokenStream {
     item
 }
 
@@ -82,14 +93,21 @@ pub fn flow_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
             let flow_attr = extract_flow_attr(&method.attrs);
 
             match flow_attr {
-                Some(FlowMethodAttr::Start) | Some(FlowMethodAttr::Listen(_)) => {
+                Some(FlowMethodAttr::Start)
+                | Some(FlowMethodAttr::Listen(_))
+                | Some(FlowMethodAttr::Router(_)) => {
                     let method_name = &method.sig.ident;
                     let name_str = method_name.to_string();
                     let wrapper_name = format_ident!("__flow_wrapper_{}", name_str);
 
                     let is_start = matches!(flow_attr, Some(FlowMethodAttr::Start));
+                    let is_router = matches!(flow_attr, Some(FlowMethodAttr::Router(_)));
                     let listen_target = match &flow_attr {
                         Some(FlowMethodAttr::Listen(target)) => target.clone(),
+                        _ => String::new(),
+                    };
+                    let router_upstream = match &flow_attr {
+                        Some(FlowMethodAttr::Router(upstream)) => upstream.clone(),
                         _ => String::new(),
                     };
 
@@ -97,11 +115,13 @@ pub fn flow_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
                         #crate_path::MethodInfo {
                             name: #name_str.to_string(),
                             is_start: #is_start,
+                            is_router: #is_router,
+                            router_for: if #is_router { Some(#router_upstream.to_string()) } else { None },
                             listens_to: vec![#listen_target.to_string()],
                         }
                     });
 
-                    // Build wrapper method signature
+                    // Build wrapper method: async fn wrapper(&mut self, args) -> Result<Value, FlowError>
                     let mut wrapper_inputs: Vec<FnArg> = Vec::new();
                     let mut wrapper_args: Vec<proc_macro2::TokenStream> = Vec::new();
                     let mut has_input = false;
@@ -124,30 +144,40 @@ pub fn flow_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
                         quote! { self.#method_name() }
                     };
 
-                    // Generate wrapper async fn
-                    let wrapper = if has_input {
-                        quote! {
-                            async fn #wrapper_name(
-                                &mut self,
-                                #(#wrapper_inputs),*
-                            ) -> std::result::Result<serde_json::Value, #crate_path::FlowError> {
-                                let result = #call.await?;
-                                Ok(serde_json::to_value(result)
-                                    .map_err(|e| #crate_path::FlowError::Serialization(e.to_string()))?)
+                    // Generate wrapper (router vs normal)
+                    let wrapper = if is_router {
+                        if has_input {
+                            quote! {
+                                async fn #wrapper_name(&mut self, #(#wrapper_inputs),*) -> std::result::Result<serde_json::Value, #crate_path::FlowError> {
+                                    let label = #call.await;
+                                    Ok(serde_json::Value::String(label))
+                                }
+                            }
+                        } else {
+                            quote! {
+                                async fn #wrapper_name(&mut self) -> std::result::Result<serde_json::Value, #crate_path::FlowError> {
+                                    let label = #call.await;
+                                    Ok(serde_json::Value::String(label))
+                                }
                             }
                         }
                     } else {
-                        quote! {
-                            async fn #wrapper_name(
-                                &mut self,
-                            ) -> std::result::Result<serde_json::Value, #crate_path::FlowError> {
-                                let result = #call.await?;
-                                Ok(serde_json::to_value(result)
-                                    .map_err(|e| #crate_path::FlowError::Serialization(e.to_string()))?)
+                        if has_input {
+                            quote! {
+                                async fn #wrapper_name(&mut self, #(#wrapper_inputs),*) -> std::result::Result<serde_json::Value, #crate_path::FlowError> {
+                                    let result = #call.await?;
+                                    Ok(serde_json::to_value(result).map_err(|e| #crate_path::FlowError::Serialization(e.to_string()))?)
+                                }
+                            }
+                        } else {
+                            quote! {
+                                async fn #wrapper_name(&mut self) -> std::result::Result<serde_json::Value, #crate_path::FlowError> {
+                                    let result = #call.await?;
+                                    Ok(serde_json::to_value(result).map_err(|e| #crate_path::FlowError::Serialization(e.to_string()))?)
+                                }
                             }
                         }
                     };
-
                     wrappers.push(wrapper);
 
                     // Generate dispatch arm (call wrapper)
