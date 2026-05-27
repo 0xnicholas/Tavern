@@ -15,9 +15,7 @@ fn extract_flow_attr(attrs: &[Attribute]) -> Option<FlowMethodAttr> {
             return Some(FlowMethodAttr::Start);
         }
         if attr.path().is_ident("listen") {
-            if let Ok(lit) = attr.parse_args::<syn::LitStr>() {
-                return Some(FlowMethodAttr::Listen(lit.value()));
-            }
+            return parse_listen_attr(attr);
         }
         if attr.path().is_ident("router") {
             if let Ok(lit) = attr.parse_args::<syn::LitStr>() {
@@ -30,8 +28,65 @@ fn extract_flow_attr(attrs: &[Attribute]) -> Option<FlowMethodAttr> {
 
 enum FlowMethodAttr {
     Start,
-    Listen(String),
-    Router(String), // upstream method name
+    Listen(ListenTarget),
+    Router(String),
+}
+
+enum ListenTarget {
+    Single(String),
+    Or(Vec<String>),
+    And(Vec<String>),
+}
+
+/// Parse `#[listen("name")]`, `#[listen(or("a", "b"))]`, or `#[listen(and("a", "b"))]`.
+fn parse_listen_attr(attr: &Attribute) -> Option<FlowMethodAttr> {
+    if !attr.path().is_ident("listen") {
+        return None;
+    }
+
+    // Try to parse as a simple string: #[listen("name")]
+    if let Ok(lit) = attr.parse_args::<syn::LitStr>() {
+        return Some(FlowMethodAttr::Listen(ListenTarget::Single(lit.value())));
+    }
+
+    // Try to parse as or("a", "b", ...) or and("a", "b", ...)
+    let content: proc_macro2::TokenStream = attr.meta.require_list().ok()?.tokens.clone();
+
+    // Parse: ident ( string_lit , string_lit , ... )
+    let parsed = syn::parse2::<ListenCall>(content).ok()?;
+    match parsed.func {
+        Func::Or => Some(FlowMethodAttr::Listen(ListenTarget::Or(parsed.args))),
+        Func::And => Some(FlowMethodAttr::Listen(ListenTarget::And(parsed.args))),
+    }
+}
+
+struct ListenCall {
+    func: Func,
+    args: Vec<String>,
+}
+
+enum Func {
+    Or,
+    And,
+}
+
+impl syn::parse::Parse for ListenCall {
+    fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
+        let func_ident: syn::Ident = input.parse()?;
+        let func = if func_ident == "or" {
+            Func::Or
+        } else {
+            Func::And
+        };
+
+        let content;
+        syn::parenthesized!(content in input);
+
+        let args: Punctuated<syn::LitStr, syn::Token![,]> = Punctuated::parse_terminated(&content)?;
+        let args: Vec<String> = args.iter().map(|s: &syn::LitStr| s.value()).collect();
+
+        Ok(ListenCall { func, args })
+    }
 }
 
 /// Strip `#[start]` and `#[listen]` attributes from a method.
@@ -102,10 +157,26 @@ pub fn flow_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
 
                     let is_start = matches!(flow_attr, Some(FlowMethodAttr::Start));
                     let is_router = matches!(flow_attr, Some(FlowMethodAttr::Router(_)));
-                    let listen_target = match &flow_attr {
-                        Some(FlowMethodAttr::Listen(target)) => target.clone(),
-                        _ => String::new(),
+
+                    // Build listen_type from flow_attr
+                    let listen_type_tokens = match &flow_attr {
+                        Some(FlowMethodAttr::Listen(ListenTarget::Single(name))) => {
+                            let name = name.clone();
+                            quote! { #crate_path::ListenType::Single(#name.to_string()) }
+                        }
+                        Some(FlowMethodAttr::Listen(ListenTarget::Or(names))) => {
+                            let names: Vec<String> = names.iter().map(|n| n.to_string()).collect();
+                            quote! { #crate_path::ListenType::Or(vec![#(#names.to_string()),*]) }
+                        }
+                        Some(FlowMethodAttr::Listen(ListenTarget::And(names))) => {
+                            let names: Vec<String> = names.iter().map(|n| n.to_string()).collect();
+                            quote! { #crate_path::ListenType::And(vec![#(#names.to_string()),*]) }
+                        }
+                        _ => {
+                            quote! { #crate_path::ListenType::Single(String::new()) }
+                        }
                     };
+
                     let router_upstream = match &flow_attr {
                         Some(FlowMethodAttr::Router(upstream)) => upstream.clone(),
                         _ => String::new(),
@@ -117,7 +188,7 @@ pub fn flow_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
                             is_start: #is_start,
                             is_router: #is_router,
                             router_for: if #is_router { Some(#router_upstream.to_string()) } else { None },
-                            listens_to: vec![#listen_target.to_string()],
+                            listen_type: #listen_type_tokens,
                         }
                     });
 

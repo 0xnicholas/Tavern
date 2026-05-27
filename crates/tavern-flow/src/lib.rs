@@ -43,12 +43,35 @@ impl Default for FlowMetadata {
 pub struct MethodInfo {
     pub name: String,
     pub is_start: bool,
-    /// 是否为条件路由器（返回 label 字符串）
     pub is_router: bool,
-    /// 路由器的上游方法（仅在 is_router 时有效）
     pub router_for: Option<String>,
-    /// 监听的方法名或 label 名列表
-    pub listens_to: Vec<String>,
+    /// 监听类型
+    pub listen_type: ListenType,
+}
+
+#[derive(Debug, Clone)]
+pub enum ListenType {
+    /// 监听单个方法名或 label
+    Single(String),
+    /// 任一完成即触发
+    Or(Vec<String>),
+    /// 全部完成才触发
+    And(Vec<String>),
+}
+
+impl ListenType {
+    /// 获取所有上游名称。
+    pub fn upstreams(&self) -> Vec<String> {
+        match self {
+            ListenType::Single(s) => vec![s.clone()],
+            ListenType::Or(v) | ListenType::And(v) => v.clone(),
+        }
+    }
+
+    /// 是否为 OR 类型。
+    pub fn is_or(&self) -> bool {
+        matches!(self, ListenType::Or(_))
+    }
 }
 
 /// Flow trait — 由 `#[derive(Flow)]` 自动实现。
@@ -122,19 +145,20 @@ impl FlowGraph {
                         .push(method.name.clone());
                 }
             } else {
-                for listen_target in &method.listens_to {
-                    // Could be a method name or a label
-                    // If it matches a method name, it's a direct dependency
-                    if nodes.contains_key(listen_target) {
-                        *in_degree.entry(method.name.clone()).or_insert(0) += 1;
+                for upstream_name in method.listen_type.upstreams() {
+                    if nodes.contains_key(&upstream_name) {
+                        if method.listen_type.is_or() {
+                            in_degree.entry(method.name.clone()).or_insert(1);
+                        } else {
+                            *in_degree.entry(method.name.clone()).or_insert(0) += 1;
+                        }
                         downstream
-                            .entry(listen_target.clone())
+                            .entry(upstream_name.clone())
                             .or_default()
                             .push(method.name.clone());
                     } else {
-                        // It's a label — triggered by router output
                         label_listeners
-                            .entry(listen_target.clone())
+                            .entry(upstream_name.clone())
                             .or_default()
                             .push(method.name.clone());
                     }
@@ -168,6 +192,8 @@ impl FlowGraph {
                     *count = count.saturating_sub(1);
                     if *count == 0 {
                         ready.push(dep.clone());
+                        // Remove from in_degree to prevent re-triggering (important for OR)
+                        self.in_degree.remove(&dep);
                     }
                 }
             }
@@ -178,7 +204,8 @@ impl FlowGraph {
     /// 获取方法的上游输入源（第一个 listens_to 或 router_for）。
     pub fn upstream_for(&self, method_name: &str) -> Option<String> {
         self.nodes.get(method_name).and_then(|m| {
-            m.listens_to
+            m.listen_type
+                .upstreams()
                 .first()
                 .cloned()
                 .or_else(|| m.router_for.clone())
@@ -305,22 +332,24 @@ mod tests {
                     is_start: true,
                     is_router: false,
                     router_for: None,
-                    listens_to: vec![],
+                    listen_type: ListenType::Single(String::new()),
                 },
                 MethodInfo {
                     name: "step_b".to_string(),
                     is_start: false,
                     is_router: false,
                     router_for: None,
-                    listens_to: vec!["step_a".to_string()],
+                    listen_type: ListenType::Single("step_a".to_string()),
                 },
             ],
         };
         let mut graph = FlowGraph::from_metadata(&meta);
         assert_eq!(graph.start_nodes(), vec!["step_a"]);
-        // step_b should become ready after step_a completes
         let next = graph.on_complete("step_a");
         assert_eq!(next, vec!["step_b"]);
+        // step_b should not trigger again
+        let next2 = graph.on_complete("step_a");
+        assert!(next2.is_empty());
     }
 
     // ── Proc-macro 原型验证: 手动展开版 ──
@@ -403,14 +432,14 @@ mod tests {
                         is_start: true,
                         is_router: false,
                         router_for: None,
-                        listens_to: vec![],
+                        listen_type: ListenType::Single(String::new()),
                     },
                     MethodInfo {
                         name: "step_b".to_string(),
                         is_start: false,
                         is_router: false,
                         router_for: None,
-                        listens_to: vec!["step_a".to_string()],
+                        listen_type: ListenType::Single("step_a".to_string()),
                     },
                 ],
             }
@@ -491,7 +520,7 @@ mod tests {
         assert!(step_one.is_start);
         let step_two = &meta.methods[1];
         assert_eq!(step_two.name, "step_two");
-        assert_eq!(step_two.listens_to, vec!["step_one"]);
+        assert_eq!(step_two.listen_type.upstreams(), vec!["step_one"]);
     }
 
     #[tokio::test]
@@ -602,5 +631,105 @@ mod tests {
             Some("published: draft_content")
         );
         assert_eq!(result, serde_json::json!("OK: draft_content"));
+    }
+
+    /// FlowEngine: OR combinator — 任一上游完成即触发。
+    #[tokio::test]
+    async fn test_flow_or_combinator() {
+        #[derive(Flow)]
+        struct OrPipeline {
+            state: OrState,
+        }
+
+        #[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
+        struct OrState {
+            executed: Vec<String>,
+        }
+
+        #[flow_impl(crate = "crate")]
+        impl OrPipeline {
+            #[start]
+            async fn source_a(&mut self) -> Result<String, FlowError> {
+                self.state.executed.push("a".into());
+                Ok("result_a".to_string())
+            }
+
+            #[start]
+            async fn source_b(&mut self) -> Result<String, FlowError> {
+                self.state.executed.push("b".into());
+                Ok("result_b".to_string())
+            }
+
+            #[listen(or("source_a", "source_b"))]
+            async fn consumer(&mut self, data: String) -> Result<String, FlowError> {
+                self.state.executed.push(format!("got:{}", data));
+                Ok(format!("final:{}", data))
+            }
+        }
+
+        let pipeline = OrPipeline {
+            state: OrState::default(),
+        };
+
+        let mut engine = FlowEngine::new(pipeline);
+        engine
+            .execute(serde_json::Value::Null)
+            .await
+            .expect("or flow should complete");
+
+        // consumer should execute exactly once after first source completes
+        let got_count = engine
+            .flow
+            .state
+            .executed
+            .iter()
+            .filter(|s| s.starts_with("got:"))
+            .count();
+        assert_eq!(got_count, 1, "consumer should execute exactly once");
+    }
+
+    /// FlowEngine: AND combinator — 全部上游完成才触发。
+    #[tokio::test]
+    async fn test_flow_and_combinator() {
+        #[derive(Flow)]
+        struct AndPipeline {
+            state: AndState,
+        }
+
+        #[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
+        struct AndState {
+            ready: bool,
+        }
+
+        #[flow_impl(crate = "crate")]
+        impl AndPipeline {
+            #[start]
+            async fn first(&mut self) -> Result<String, FlowError> {
+                Ok("first".to_string())
+            }
+
+            #[start]
+            async fn second(&mut self) -> Result<String, FlowError> {
+                Ok("second".to_string())
+            }
+
+            #[listen(and("first", "second"))]
+            async fn after_both(&mut self) -> Result<String, FlowError> {
+                self.state.ready = true;
+                Ok("done".to_string())
+            }
+        }
+
+        let pipeline = AndPipeline {
+            state: AndState::default(),
+        };
+
+        let mut engine = FlowEngine::new(pipeline);
+        engine
+            .execute(serde_json::Value::Null)
+            .await
+            .expect("and flow should complete");
+
+        assert!(engine.flow.state.ready, "after_both should have executed");
     }
 }
