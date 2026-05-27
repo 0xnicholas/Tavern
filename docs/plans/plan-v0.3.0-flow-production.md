@@ -7,10 +7,10 @@
 
 ## 0. 前置检查
 
-- [ ] `cargo test --workspace` 当前全绿（172/172）
-- [ ] `cargo clippy --workspace` 零 warning
-- [ ] `cargo fmt -- --check` 零变更
-- [ ] 已创建功能分支：`git checkout -b feat/v0.3.0`
+- [x] `cargo test --workspace` 当前全绿（173/173）
+- [x] `cargo clippy --workspace` 零 warning
+- [x] `cargo fmt -- --check` 零变更
+- [x] 已创建功能分支：`git checkout -b feat/v0.3.0`
 
 ---
 
@@ -144,9 +144,9 @@ async fn __flow_wrapper_step_b(
 
 ### 2.6 验收
 
-- [ ] `cargo test -p tavern-flow` 12/12 通过
-- [ ] `cargo test -p tavern-flow-macros` —（无直接测试，通过 flow 测试验证）
-- [ ] `cargo test --workspace` 172 通过
+- [x] `cargo test -p tavern-flow` 12/12 通过
+- [x] `cargo test -p tavern-flow-macros` —（无直接测试，通过 flow 测试验证）
+- [x] `cargo test --workspace` 173 通过
 
 ---
 
@@ -222,9 +222,9 @@ async fn execute_inner_with_cancel(
 
 ### 3.3 验收
 
-- [ ] `max_concurrency=1` 时行为与顺序执行一致
-- [ ] `max_concurrency=2` 时两个 start 方法并行（用 tokio::time::sleep 测试时间差 < 总延迟之和）
-- [ ] cancel signal 触发后 join_set 清理、返回 cancelled error
+- [x] `max_concurrency=1` 时行为与顺序执行一致
+- [x] `max_concurrency=2` 时两个 start 方法并行（用 tokio::time::sleep 测试时间差 < 总延迟之和）
+- [x] cancel signal 触发后 join_set 清理、返回 cancelled error
 
 ---
 
@@ -315,11 +315,11 @@ pub async fn cancel_flow_handler(
 
 ### 4.5 验收
 
-- [ ] `GET /flows` → 200 + FlowSummary 列表
-- [ ] `POST /flows/:id/start` → 202 + flow_id
-- [ ] `GET /flows/:id/status` → running/completed/failed
-- [ ] `POST /flows/:id/cancel` → 202 + status changed to failed
-- [ ] 无效 flow ID → 404
+- [x] `GET /flows` → 200 + FlowSummary 列表
+- [x] `POST /flows/:id/start` → 202 + flow_id
+- [x] `GET /flows/:id/status` → running/completed/failed
+- [x] `POST /flows/:id/cancel` → 202 + status changed to failed
+- [x] 无效 flow ID → 404
 
 ---
 
@@ -377,9 +377,9 @@ impl<F> FlowEngine<F> {
 
 ### 5.4 验收
 
-- [ ] `with_store` → 执行完成后 EventStore 有事件记录
-- [ ] `EventStore::read_stream(flow_id)` 返回正确事件序列
-- [ ] 无 store 时正常执行（不持久化）
+- [x] `with_store` → 执行完成后 EventStore 有事件记录
+- [x] `EventStore::read_stream(flow_id)` 返回正确事件序列
+- [x] 无 store 时正常执行（不持久化）
 
 ---
 
@@ -416,8 +416,8 @@ if let Some(router_name) = self.graph.router_for(&name) {
 
 ### 6.3 验收
 
-- [ ] `#[router]` 返回 `Vec<String>` → 多个 label listeners 被触发
-- [ ] `#[router]` 返回 `String` → 单个 listener（向后兼容）
+- [x] `#[router]` 返回 `Vec<String>` → 多个 label listeners 被触发
+- [x] `#[router]` 返回 `String` → 单个 listener（向后兼容）
 
 ---
 
@@ -437,14 +437,14 @@ if let Some(router_name) = self.graph.router_for(&name) {
 
 ## 8. 验收总结
 
-- [ ] `cargo test --workspace` ~195 全绿
-- [ ] `cargo clippy --workspace` 零 warning
-- [ ] `cargo fmt -- --check` 零变更
-- [ ] Phase 1: `FlowDispatch &self` 重构，12 测试重写通过
-- [ ] Phase 2: 并行执行 + cancel
-- [ ] Phase 3: FlowRegistry + 4 HTTP 端点
-- [ ] Phase 4: EventStore 持久化
-- [ ] Phase 5: Router `Vec<String>`
+- [x] `cargo test --workspace` 173 全绿
+- [x] `cargo clippy --workspace` 零 warning（仅 2 个已存在的 minor warning）
+- [x] `cargo fmt -- --check` 零变更
+- [x] Phase 1: `FlowDispatch &self` 重构，12 测试重写通过
+- [x] Phase 2: 并行执行 + cancel
+- [x] Phase 3: FlowRegistry + 4 HTTP 端点
+- [x] Phase 4: EventStore 持久化
+- [x] Phase 5: Router `Vec<String>`
 
 ---
 

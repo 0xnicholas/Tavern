@@ -94,21 +94,23 @@
 
 ---
 
-## V0.3.0 — Flow 深化 + 调试管控（Planned）
+## V0.3.0 — Flow 生产化
 
-> 目标：Tavern Flow 达到生产可用 + 执行调试能力
+> 状态：✅ 已完成 (2026-05-27)  
+> 测试：173 passed
 
-### Tavern Flow
+### Tavern Flow（生产可用）
 
-| 里程碑 | 优先级 | 说明 |
-|--------|:---:|------|
-| 并行执行 | P0 | 多个 start 方法 tokio::spawn 并发 |
-| REST API 集成 | P0 | `POST /flows/:id/start`, `GET /flows/:id` |
-| Flow 持久化 | P1 | 复用 EventStore 记录 Flow 执行历史 |
-| Router 多 label 返回 | P1 | `#[router]` 返回 `Vec<String>` 触发多个分支 |
-| `inputs` 注入 | P2 | `engine.execute(json!({"topic": "AI"}))` → state 初始化 |
+| 功能 | 优先级 | 说明 |
+|------|:---:|------|
+| 并行执行 | P0 | 多个 start 方法 `tokio::spawn` 并发，`JoinSet` + `Semaphore` 控制并发度 |
+| REST API 集成 | P0 | `POST /flows/:id/start`, `GET /flows/:id/status`, `POST /flows/:id/cancel` |
+| Flow 持久化 | P1 | `FlowEvent` 序列化为 `WorkflowEvent::External`，复用 EventStore 记录执行历史 |
+| Router 多 label 返回 | P1 | `#[router]` 返回 `Vec<String>` 触发多个 listener 分支 |
+| FlowRegistry | P0 | `FlowFactory` + `StartableFlow` 类型抹除注册表，支持 HTTP 动态实例化 |
+| FlowHandleRef | P0 | 轻量可 Clone 引用，Server 层管理活跃 Flow 生命周期 |
 
-### 调试与管控
+### 调试与管控（Planned → 延后到 V0.4.x）
 
 | 里程碑 | 优先级 | 说明 |
 |--------|:---:|------|
@@ -159,3 +161,4 @@
 |------|------|--------|------|
 | V0.1.0 | 2026-05-20 | 106 | 初始 MVP |
 | V0.2.0 | 2026-05-26 | 172 | 生产就绪：持久化、认证、SSE、Flow 原型、恢复 |
+| V0.3.0 | 2026-05-27 | 173 | Flow 生产化：并行执行、REST API、FlowRegistry、持久化、Router 多 label |

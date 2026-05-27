@@ -284,23 +284,23 @@ CompError::Internal => 500
 
 ### Phase 1 验收
 
-- [ ] `cargo check --workspace` 通过，无警告
-- [ ] `cargo test --workspace` 通过，现有 `tavern-comp` 测试全部通过
-- [ ] `cargo clippy --workspace` 通过
-- [ ] 新增模块有单元测试覆盖核心逻辑（事件应用、状态重建、Action 决策、StepExecutor 超时）
-- [ ] V1 的 `run()` 行为与重构前一致（输出格式、错误类型、超时重试语义）
-- [ ] `start()` 返回的 handle 可通过 `await_completion()` 获得与 `run()` 相同的结果
+- [x] `cargo check --workspace` 通过，无警告
+- [x] `cargo test --workspace` 通过，现有 `tavern-comp` 测试全部通过
+- [x] `cargo clippy --workspace` 通过
+- [x] 新增模块有单元测试覆盖核心逻辑（事件应用、状态重建、Action 决策、StepExecutor 超时）
+- [x] V1 的 `run()` 行为与重构前一致（输出格式、错误类型、超时重试语义）
+- [x] `start()` 返回的 handle 可通过 `await_completion()` 获得与 `run()` 相同的结果
 
 ### Phase 2 验收
 
-- [ ] `cargo test --workspace` 通过
-- [ ] `/workflows/:id/run` 保持同步 200 响应（V1 兼容）
-- [ ] `/workflows/:id/start` 返回 202 + execution_id
-- [ ] `/executions/:id` 可查询 Running/Completed/Failed 状态
-- [ ] `/executions/:id/signal` 可向 WaitingForSignal 实例发送信号并恢复执行
-- [ ] `/executions/:id/cancel` 可向运行中实例发送取消请求
-- [ ] `/executions/:id/events` 返回完整审计日志
-- [ ] 所有新端点 HTTP 状态码与 spec §8.2 映射一致
+- [x] `cargo test --workspace` 通过
+- [x] `/workflows/:id/run` 保持同步 200 响应（V1 兼容）
+- [x] `/workflows/:id/start` 返回 202 + execution_id
+- [x] `/executions/:id` 可查询 Running/Completed/Failed 状态
+- [x] `/executions/:id/signal` 可向 WaitingForSignal 实例发送信号并恢复执行
+- [x] `/executions/:id/cancel` 可向运行中实例发送取消请求
+- [x] `/executions/:id/events` 返回完整审计日志
+- [x] 所有新端点 HTTP 状态码与 spec §8.2 映射一致
 
 ---
 

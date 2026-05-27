@@ -9,11 +9,11 @@
 
 冻结 spec 后编码前必须确认：
 
-- [ ] `cargo test --workspace` 当前全绿（106/106）
-- [ ] `cargo clippy --workspace` 零 warning
-- [ ] `cargo fmt -- --check` 零变更
-- [ ] 已创建功能分支：`git checkout -b feat/v0.2.0`
-- [ ] Workspace root `Cargo.toml` 已添加 `"crates/tavern-config"`（若独立 crate）
+- [x] `cargo test --workspace` 当前全绿（106/106）
+- [x] `cargo clippy --workspace` 零 warning
+- [x] `cargo fmt -- --check` 零变更
+- [x] 已创建功能分支：`git checkout -b feat/v0.2.0`
+- [x] Workspace root `Cargo.toml` 已添加 `"crates/tavern-config"`（若独立 crate）
 
 ---
 
@@ -149,18 +149,18 @@ CREATE INDEX idx_instances_workflow ON workflow_instances(workflow_id);
 ### 2.4 测试
 
 **新增测试**（`crates/tavern-comp/src/store.rs` `#[cfg(test)]`）：
-- [ ] `MemoryEventStore` 保留现有测试，`list_by_status` 覆盖实现正确工作
-- [ ] `SqliteEventStore::new(":memory:")` — 内存 SQLite 测试（无需文件）
-- [ ] `append` + `read_stream` 往返测试
-- [ ] `list_by_status` 筛选测试
-- [ ] `save_snapshot` + `load_snapshot` 测试
-- [ ] 辅助表 `upsert_instance_meta` 验证（instance_id 存在时更新，不存在时插入）
+- [x] `MemoryEventStore` 保留现有测试，`list_by_status` 覆盖实现正确工作
+- [x] `SqliteEventStore::new(":memory:")` — 内存 SQLite 测试（无需文件）
+- [x] `append` + `read_stream` 往返测试
+- [x] `list_by_status` 筛选测试
+- [x] `save_snapshot` + `load_snapshot` 测试
+- [x] 辅助表 `upsert_instance_meta` 验证（instance_id 存在时更新，不存在时插入）
 
 ### 2.5 验收标准
 
-- [ ] `cargo test -p tavern-comp` 全绿
-- [ ] `cargo test -p tavern-comp --features postgres`（CI 中可选）
-- [ ] SQLite `:memory:` 模式无需外部数据库文件
+- [x] `cargo test -p tavern-comp` 全绿
+- [x] `cargo test -p tavern-comp --features postgres`（CI 中可选）
+- [x] SQLite `:memory:` 模式无需外部数据库文件
 
 ---
 
@@ -205,15 +205,15 @@ serde = { version = "1.0", features = ["derive"] }
 ### 3.4 向后兼容测试
 
 **新增测试**（`tavern-server` 集成测试）：
-- [ ] 旧环境变量 `RUNTIME_URL` 仍能生效
-- [ ] `TAVERN_RUNTIME_URL` 优先级高于 `RUNTIME_URL`
-- [ ] 缺少 `config.toml` 时仅用环境变量也能启动
+- [x] 旧环境变量 `RUNTIME_URL` 仍能生效
+- [x] `TAVERN_RUNTIME_URL` 优先级高于 `RUNTIME_URL`
+- [x] 缺少 `config.toml` 时仅用环境变量也能启动
 
 ### 3.5 验收标准
 
-- [ ] `cargo test -p tavern-server` 全绿
-- [ ] 删除 `config.toml` 后通过环境变量仍能运行服务
-- [ ] 设置 `TAVERN_AUTH_KEYS="a,b,c"` 后 `AuthConfig.keys == vec!["a","b","c"]`
+- [x] `cargo test -p tavern-server` 全绿
+- [x] 删除 `config.toml` 后通过环境变量仍能运行服务
+- [x] 设置 `TAVERN_AUTH_KEYS="a,b,c"` 后 `AuthConfig.keys == vec!["a","b","c"]`
 
 ---
 
@@ -269,18 +269,18 @@ GET /executions/:id/events/stream?api_key=sk-xxx
 
 ### 4.4 测试
 
-- [ ] `auth_type = "none"` 时所有请求通过
-- [ ] 无效 API Key 返回 401
-- [ ] 有效 API Key 正常访问
-- [ ] 无效 Bearer Token 返回 401
-- [ ] 过期 Bearer Token 返回 401
-- [ ] SSE 无 `api_key` query param 返回 401
+- [x] `auth_type = "none"` 时所有请求通过
+- [x] 无效 API Key 返回 401
+- [x] 有效 API Key 正常访问
+- [x] 无效 Bearer Token 返回 401
+- [x] 过期 Bearer Token 返回 401
+- [x] SSE 无 `api_key` query param 返回 401
 
 ### 4.5 验收标准
 
-- [ ] `cargo test -p tavern-server` 全绿
-- [ ] `curl -H "x-api-key: bad" http://localhost:3000/agents` → 401
-- [ ] `curl -H "x-api-key: sk-tavern-xxx" http://localhost:3000/agents` → 200
+- [x] `cargo test -p tavern-server` 全绿
+- [x] `curl -H "x-api-key: bad" http://localhost:3000/agents` → 401
+- [x] `curl -H "x-api-key: sk-tavern-xxx" http://localhost:3000/agents` → 200
 
 ---
 
@@ -318,14 +318,14 @@ GET /executions/:id/events/stream?api_key=sk-xxx
 
 ### 5.4 测试
 
-- [ ] SSE 客户端连接后能收到 `StepCompleted` 事件
-- [ ] 实例完成后广播发送器从 HashMap 中移除
-- [ ] 多个 SSE 客户端同时订阅同一实例，都能收到事件
+- [x] SSE 客户端连接后能收到 `StepCompleted` 事件
+- [x] 实例完成后广播发送器从 HashMap 中移除
+- [x] 多个 SSE 客户端同时订阅同一实例，都能收到事件
 
 ### 5.5 验收标准
 
-- [ ] `curl -N "http://localhost:3000/executions/:id/events/stream?api_key=xxx"` 实时输出 JSON 事件
-- [ ] 实例完成后再次订阅返回空流（或 404）
+- [x] `curl -N "http://localhost:3000/executions/:id/events/stream?api_key=xxx"` 实时输出 JSON 事件
+- [x] 实例完成后再次订阅返回空流（或 404）
 
 ---
 
@@ -371,14 +371,14 @@ pub fn reload_from_dir(&self, dir: &Path) -> Result<(), TavernError> {
 
 ### 6.4 测试
 
-- [ ] 修改 `configs/agents/researcher.yaml` 后 500ms 内生效
-- [ ] 新增 Agent YAML 后可通过 API 查询到
-- [ ] 删除 Agent YAML 后 API 返回 404
-- [ ] 错误 YAML 被跳过，不影响其他 Agent
+- [x] 修改 `configs/agents/researcher.yaml` 后 500ms 内生效
+- [x] 新增 Agent YAML 后可通过 API 查询到
+- [x] 删除 Agent YAML 后 API 返回 404
+- [x] 错误 YAML 被跳过，不影响其他 Agent
 
 ### 6.5 验收标准
 
-- [ ] `echo 'new content' > configs/agents/test.yaml`，500ms 后 `GET /agents/test` → 200
+- [x] `echo 'new content' > configs/agents/test.yaml`，500ms 后 `GET /agents/test` → 200
 
 ---
 
@@ -409,13 +409,13 @@ axum::serve(listener, app)
 
 ### 7.3 测试
 
-- [ ] `Ctrl+C` 后进程在活跃请求完成后退出
-- [ ] `/health` 返回 `checks.store = "connected"`
+- [x] `Ctrl+C` 后进程在活跃请求完成后退出
+- [x] `/health` 返回 `checks.store = "connected"`
 
 ### 7.4 验收标准
 
-- [ ] `kill -TERM <pid>` → 日志输出 "starting graceful shutdown"
-- [ ] `/health` 返回 JSON 包含 `version` 和 `checks`
+- [x] `kill -TERM <pid>` → 日志输出 "starting graceful shutdown"
+- [x] `/health` 返回 JSON 包含 `version` 和 `checks`
 
 ---
 
@@ -462,9 +462,9 @@ cargo sqlx prepare --workspace  # 生成 .sqlx/query-*.json
 
 ### 8.5 验收标准
 
-- [ ] `docker build -t tavern .` 成功
-- [ ] `docker-compose up` 后 `curl http://localhost:3000/health` → 200
-- [ ] `cargo sqlx prepare --check` 通过（.sqlx/ 已提交）
+- [x] `docker build -t tavern .` 成功
+- [x] `docker-compose up` 后 `curl http://localhost:3000/health` → 200
+- [x] `cargo sqlx prepare --check` 通过（.sqlx/ 已提交）
 
 ---
 
@@ -475,38 +475,38 @@ cargo sqlx prepare --workspace  # 生成 .sqlx/query-*.json
 **文件**：`crates/tavern-server/tests/integration_v020.rs`（新增独立集成测试目录）
 
 使用 `#[tokio::test]` + `tower::ServiceExt::oneshot` 进行端到端测试：
-- [ ] 完整 Workflow 执行：POST `/workflows/:id/start` → SSE 接收事件 → GET `/executions/:id` 验证状态
-- [ ] 认证中间件：未认证访问 `/agents` → 401
-- [ ] 热重载 + 新 Agent 执行：修改 YAML → reload → POST `/agents/:id/execute`
+- [x] 完整 Workflow 执行：POST `/workflows/:id/start` → SSE 接收事件 → GET `/executions/:id` 验证状态
+- [x] 认证中间件：未认证访问 `/agents` → 401
+- [x] 热重载 + 新 Agent 执行：修改 YAML → reload → POST `/agents/:id/execute`
 
 ### 9.2 向后兼容测试
 
-- [ ] `POST /workflows/:id/run` 仍返回同步结果（V0.1.0 行为）
-- [ ] `cargo test --workspace` 全绿（V0.1.0 的 106 个测试必须全部通过）
-- [ ] YAML 配置格式零变更（`configs/agents/*.yaml`、`configs/workflows/*.yaml`）
+- [x] `POST /workflows/:id/run` 仍返回同步结果（V0.1.0 行为）
+- [x] `cargo test --workspace` 全绿（V0.1.0 的 106 个测试必须全部通过）
+- [x] YAML 配置格式零变更（`configs/agents/*.yaml`、`configs/workflows/*.yaml`）
 
 ### 9.3 性能基准
 
-- [ ] 内存 EventStore vs SQLite EventStore：100 次 Workflow 执行耗时对比
-- [ ] Snapshot 开启前后：1000 事件实例的重放耗时对比
+- [x] 内存 EventStore vs SQLite EventStore：100 次 Workflow 执行耗时对比
+- [x] Snapshot 开启前后：1000 事件实例的重放耗时对比
 
 ### 9.4 验收标准（V0.2.0 DoD）
 
-- [ ] `cargo check --workspace` 通过，无 warning
-- [ ] `cargo clippy --workspace` 通过
-- [ ] `cargo fmt -- --check` 通过
-- [ ] `cargo test --workspace` 全绿（V0.1.0 106 + V0.2.0 新增）
-- [ ] SQLite EventStore：append / read_stream / snapshot / list_by_status
-- [ ] Agent 热重载：500ms debounce 内生效
-- [ ] API Key 认证：无效 → 401，有效 → 200
-- [ ] SSE：客户端实时接收事件流
-- [ ] 优雅停机：`SIGTERM` 后等待活跃请求
-- [ ] Docker：`docker build` + `docker-compose up` 可运行
-- [ ] 健康检查：返回 `version` + `checks`
-- [ ] 结构化日志：`TAVERN_LOG_FORMAT=json` 输出单行 JSON
-- [ ] SQLite WAL：`PRAGMA journal_mode` 返回 `wal`
-- [ ] `/metrics` 认证：`metrics_public = false` 时未认证返回 401
-- [ ] 旧环境变量兼容：`RUNTIME_URL` 在 V0.2.0 仍有效
+- [x] `cargo check --workspace` 通过，无 warning
+- [x] `cargo clippy --workspace` 通过
+- [x] `cargo fmt -- --check` 通过
+- [x] `cargo test --workspace` 全绿（V0.1.0 106 + V0.2.0 新增）
+- [x] SQLite EventStore：append / read_stream / snapshot / list_by_status
+- [x] Agent 热重载：500ms debounce 内生效
+- [x] API Key 认证：无效 → 401，有效 → 200
+- [x] SSE：客户端实时接收事件流
+- [x] 优雅停机：`SIGTERM` 后等待活跃请求
+- [x] Docker：`docker build` + `docker-compose up` 可运行
+- [x] 健康检查：返回 `version` + `checks`
+- [x] 结构化日志：`TAVERN_LOG_FORMAT=json` 输出单行 JSON
+- [x] SQLite WAL：`PRAGMA journal_mode` 返回 `wal`
+- [x] `/metrics` 认证：`metrics_public = false` 时未认证返回 401
+- [x] 旧环境变量兼容：`RUNTIME_URL` 在 V0.2.0 仍有效
 
 ---
 
