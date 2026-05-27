@@ -249,20 +249,25 @@ impl ExecutionReplayer {
 
             // Compute duration for completed/failed steps
             match event {
-                WorkflowEvent::StepStarted { step_id, started_at: st } => {
+                WorkflowEvent::StepStarted {
+                    step_id,
+                    started_at: st,
+                } => {
                     step_start_times.insert(step_id.clone(), *st);
                 }
-                WorkflowEvent::StepCompleted { step_id, completed_at: ct, .. } => {
+                WorkflowEvent::StepCompleted {
+                    step_id,
+                    completed_at: ct,
+                    ..
+                } => {
                     if let Some(st) = step_start_times.get(step_id) {
-                        entry.duration_ms =
-                            Some((*ct - *st).num_milliseconds().max(0) as u64);
+                        entry.duration_ms = Some((*ct - *st).num_milliseconds().max(0) as u64);
                     }
                 }
                 WorkflowEvent::StepFailed { step_id, .. } => {
                     if let Some(st) = step_start_times.get(step_id) {
-                        entry.duration_ms = Some(
-                            (Utc::now() - *st).num_milliseconds().max(0) as u64,
-                        );
+                        entry.duration_ms =
+                            Some((Utc::now() - *st).num_milliseconds().max(0) as u64);
                     }
                 }
                 _ => {}
@@ -286,7 +291,9 @@ impl ExecutionReplayer {
                 WorkflowEvent::StepCompleted { .. } => {
                     summary.completed_steps += 1;
                 }
-                WorkflowEvent::StepFailed { will_retry: false, .. } => {
+                WorkflowEvent::StepFailed {
+                    will_retry: false, ..
+                } => {
                     summary.failed_steps += 1;
                 }
                 WorkflowEvent::StepRetryScheduled { .. } => {
@@ -295,7 +302,9 @@ impl ExecutionReplayer {
                 WorkflowEvent::SignalReceived { .. } => {
                     summary.signals_received += 1;
                 }
-                WorkflowEvent::WorkflowCompleted { completed_at: ct, .. } => {
+                WorkflowEvent::WorkflowCompleted {
+                    completed_at: ct, ..
+                } => {
                     completed_at = Some(*ct);
                 }
                 WorkflowEvent::WorkflowFailed { failed_at: ft, .. } => {
@@ -425,9 +434,9 @@ fn truncate_preview(value: &Value) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chrono::Duration;
     use crate::store::MemoryEventStore;
     use crate::workflow::{Step, Workflow};
+    use chrono::Duration;
 
     fn make_test_workflow() -> Workflow {
         Workflow {
@@ -523,7 +532,9 @@ mod tests {
         }
 
         let opts = ReplayOptions::default();
-        let replay = ExecutionReplayer::replay(&store, "exec-1", opts).await.unwrap();
+        let replay = ExecutionReplayer::replay(&store, "exec-1", opts)
+            .await
+            .unwrap();
 
         assert_eq!(replay.execution_id, "exec-1");
         assert_eq!(replay.workflow_id, "test_pipeline");
@@ -545,7 +556,9 @@ mod tests {
             detail: DetailLevel::Low,
             ..Default::default()
         };
-        let replay = ExecutionReplayer::replay(&store, "exec-2", opts).await.unwrap();
+        let replay = ExecutionReplayer::replay(&store, "exec-2", opts)
+            .await
+            .unwrap();
 
         let has_scheduled = replay
             .timeline
@@ -566,7 +579,9 @@ mod tests {
             detail: DetailLevel::High,
             ..Default::default()
         };
-        let replay = ExecutionReplayer::replay(&store, "exec-3", opts).await.unwrap();
+        let replay = ExecutionReplayer::replay(&store, "exec-3", opts)
+            .await
+            .unwrap();
 
         let completed = replay
             .timeline
@@ -589,7 +604,9 @@ mod tests {
             to: Some(Utc::now() + Duration::hours(1)),
             ..Default::default()
         };
-        let replay = ExecutionReplayer::replay(&store, "exec-4", opts).await.unwrap();
+        let replay = ExecutionReplayer::replay(&store, "exec-4", opts)
+            .await
+            .unwrap();
         assert!(!replay.timeline.is_empty());
 
         let opts2 = ReplayOptions {
@@ -597,7 +614,9 @@ mod tests {
             from: Some(Utc::now() + Duration::hours(1)),
             ..Default::default()
         };
-        let replay2 = ExecutionReplayer::replay(&store, "exec-4", opts2).await.unwrap();
+        let replay2 = ExecutionReplayer::replay(&store, "exec-4", opts2)
+            .await
+            .unwrap();
         assert!(replay2.timeline.is_empty());
     }
 
@@ -614,7 +633,9 @@ mod tests {
             step_id: Some("research".to_string()),
             ..Default::default()
         };
-        let replay = ExecutionReplayer::replay(&store, "exec-5", opts).await.unwrap();
+        let replay = ExecutionReplayer::replay(&store, "exec-5", opts)
+            .await
+            .unwrap();
 
         assert!(replay.timeline.iter().all(|e| {
             e.step_id.as_ref() == Some(&"research".to_string()) || e.step_id.is_none()
@@ -661,7 +682,9 @@ mod tests {
             .unwrap();
 
         let opts = ReplayOptions::default(); // detail=Medium, excludes InstanceCreated
-        let replay = ExecutionReplayer::replay(&store, "exec-empty", opts).await.unwrap();
+        let replay = ExecutionReplayer::replay(&store, "exec-empty", opts)
+            .await
+            .unwrap();
         assert!(replay.timeline.is_empty());
         assert_eq!(replay.status, "pending");
     }
@@ -675,18 +698,20 @@ mod tests {
         }
 
         let opts = ReplayOptions::default();
-        let replay = ExecutionReplayer::replay(&store, "exec-7", opts).await.unwrap();
+        let replay = ExecutionReplayer::replay(&store, "exec-7", opts)
+            .await
+            .unwrap();
 
         let completed = replay
             .timeline
             .iter()
-            .find(|e| {
-                e.event_type == "StepCompleted" && e.step_id == Some("research".to_string())
-            })
+            .find(|e| e.event_type == "StepCompleted" && e.step_id == Some("research".to_string()))
             .expect("research completed");
         let diff = completed.state_diff.as_ref().expect("has diff");
         assert!(diff.context_changed);
-        assert!(diff.context_keys_added.contains(&"research_notes".to_string()));
+        assert!(diff
+            .context_keys_added
+            .contains(&"research_notes".to_string()));
         assert_eq!(diff.step_status_before, Some("Running".to_string()));
         assert_eq!(diff.step_status_after, Some("Completed".to_string()));
     }
@@ -703,7 +728,9 @@ mod tests {
             detail: DetailLevel::Medium,
             ..Default::default()
         };
-        let replay = ExecutionReplayer::replay(&store, "exec-8", opts).await.unwrap();
+        let replay = ExecutionReplayer::replay(&store, "exec-8", opts)
+            .await
+            .unwrap();
 
         let has_scheduled = replay
             .timeline

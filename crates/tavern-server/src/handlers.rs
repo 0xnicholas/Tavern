@@ -589,16 +589,13 @@ pub async fn replay_execution_handler(
         step_id: params.step_id,
     };
 
-    let replay = match tavern_comp::replay::ExecutionReplayer::replay(
-        state.event_store.as_ref(),
-        &id,
-        opts,
-    )
-    .await
-    {
-        Ok(r) => r,
-        Err(e) => return Err(map_comp_error(e)),
-    };
+    let replay =
+        match tavern_comp::replay::ExecutionReplayer::replay(state.event_store.as_ref(), &id, opts)
+            .await
+        {
+            Ok(r) => r,
+            Err(e) => return Err(map_comp_error(e)),
+        };
 
     Ok(Json(replay))
 }
