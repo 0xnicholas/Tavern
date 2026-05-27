@@ -1,21 +1,30 @@
 version: "3.8"
 
+# Tavern V0.2.0 Deployment
+#
+# 默认使用 SQLite（零依赖启动）。切换到 PostgreSQL：
+#   TAVERN_STORE__STORE_TYPE=postgres
+#   TAVERN_STORE__DATABASE_URL=postgres://tavern:tavern@db:5432/tavern
+
 services:
   tavern:
     build: .
     ports:
       - "3000:3000"
     environment:
-      - RUNTIME_URL=http://pandaria:8080
-      - TAVERN_STORE_TYPE=sqlite
-      - TAVERN_DATABASE_URL=sqlite:///app/data/tavern.db
+      - TAVERN_RUNTIME__URL=http://pandaria:8080
+      - TAVERN_STORE__STORE_TYPE=sqlite
+      - TAVERN_STORE__DATABASE_URL=sqlite:///app/data/tavern.db
+      - TAVERN_AUTH__AUTH_TYPE=none
+      - TAVERN_OBSERVABILITY__LOG_FORMAT=json
     volumes:
       - tavern-data:/app/data
+      - ./configs:/app/configs:ro
     depends_on:
-      - db
       - pandaria
     restart: unless-stopped
 
+  # === PostgreSQL（可选，仅当 TAVERN_STORE__STORE_TYPE=postgres 时启用） ===
   db:
     image: postgres:16-alpine
     environment:
@@ -26,7 +35,10 @@ services:
       - postgres-data:/var/lib/postgresql/data
     ports:
       - "5432:5432"
+    profiles:
+      - postgres
 
+  # === Pandaria Runtime（占位，替换为实际镜像） ===
   pandaria:
     image: pandaria/runtime:latest
     ports:
