@@ -52,6 +52,10 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         .route(
             "/executions/:id/events/stream",
             get(crate::sse::execution_events_stream_handler),
+        )
+        .route(
+            "/executions/:id/replay",
+            get(handlers::replay_execution_handler),
         );
 
     if metrics_public {

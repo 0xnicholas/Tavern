@@ -1,5 +1,5 @@
 use axum::{
-    extract::{Path, State},
+    extract::{Path, Query, State},
     http::StatusCode,
     response::IntoResponse,
     Json,
@@ -12,7 +12,7 @@ use tavern_comp::CompError;
 use tavern_core::RuntimeError;
 use tavern_hero::TavernError;
 
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 
 use crate::state::AppState;
 
@@ -252,6 +252,22 @@ pub fn map_comp_error(err: CompError) -> (StatusCode, ApiError) {
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "PlanningAgentNotRegistered",
                 format!("Planning agent '{}' not registered", id),
+            ),
+        ),
+        CompError::InvalidReplayRange { reason } => (
+            StatusCode::BAD_REQUEST,
+            ApiError::new(
+                StatusCode::BAD_REQUEST,
+                "InvalidReplayRange",
+                reason.clone(),
+            ),
+        ),
+        CompError::InvalidParameter { field, reason } => (
+            StatusCode::BAD_REQUEST,
+            ApiError::new(
+                StatusCode::BAD_REQUEST,
+                "InvalidParameter",
+                format!("{}: {}", field, reason),
             ),
         ),
         CompError::Hero(hero_err) => map_tavern_error(hero_err),
@@ -539,6 +555,52 @@ pub async fn cancel_execution_handler(
     }
 
     Err(map_comp_error(CompError::InstanceClosed { id }))
+}
+
+// ── Replay handler ──
+
+#[derive(Deserialize)]
+pub struct ReplayQueryParams {
+    #[serde(default = "default_detail")]
+    pub detail: String,
+    pub from: Option<DateTime<Utc>>,
+    pub to: Option<DateTime<Utc>>,
+    pub step_id: Option<String>,
+}
+
+fn default_detail() -> String {
+    "medium".to_string()
+}
+
+pub async fn replay_execution_handler(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+    Query(params): Query<ReplayQueryParams>,
+) -> Result<impl IntoResponse, (StatusCode, ApiError)> {
+    let detail = match tavern_comp::replay::DetailLevel::from_str(&params.detail) {
+        Ok(d) => d,
+        Err(e) => return Err(map_comp_error(e)),
+    };
+
+    let opts = tavern_comp::replay::ReplayOptions {
+        detail,
+        from: params.from,
+        to: params.to,
+        step_id: params.step_id,
+    };
+
+    let replay = match tavern_comp::replay::ExecutionReplayer::replay(
+        state.event_store.as_ref(),
+        &id,
+        opts,
+    )
+    .await
+    {
+        Ok(r) => r,
+        Err(e) => return Err(map_comp_error(e)),
+    };
+
+    Ok(Json(replay))
 }
 
 // ---------- Workflow management handlers ----------
