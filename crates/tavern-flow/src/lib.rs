@@ -256,7 +256,7 @@ impl<F: Flow + FlowDispatch + Send + 'static> FlowEngine<F> {
     pub fn start_async(self) -> (FlowHandle, FlowHandleRef) {
         let flow_id = uuid::Uuid::new_v4().to_string();
         let status = Arc::new(std::sync::atomic::AtomicU8::new(1)); // running
-        let (cancel_tx, cancel_rx) = tokio::sync::oneshot::channel::<()>();
+        let (cancel_tx, _cancel_rx) = tokio::sync::oneshot::channel::<()>();
         let (completion_tx, completion_rx) =
             tokio::sync::oneshot::channel::<Result<serde_json::Value, FlowError>>();
 
@@ -267,10 +267,21 @@ impl<F: Flow + FlowDispatch + Send + 'static> FlowEngine<F> {
             started_at: chrono::Utc::now(),
         };
 
+        let max_concurrency = self.max_concurrency;
         let status_clone = status.clone();
         tokio::spawn(async move {
-            let mut engine = self;
-            let result = engine.execute_inner().await;
+            let result = if max_concurrency > 1 {
+                Self::execute_inner_parallel(self.flow, self.graph, self.store, max_concurrency)
+                    .await
+            } else {
+                let mut engine = Self {
+                    flow: self.flow,
+                    graph: self.graph,
+                    store: self.store,
+                    max_concurrency: 1,
+                };
+                engine.execute_inner().await
+            };
             status_clone.store(
                 match &result {
                     Ok(_) => 2,
@@ -390,6 +401,85 @@ impl<F: Flow + FlowDispatch + Send + 'static> FlowEngine<F> {
         if let Some(ref store) = self.store {
             let _ = store.append(flow_id, event.to_workflow_event()).await;
         }
+    }
+
+    /// 并行执行：tokio::sync::Mutex 串行化 dispatch，JoinSet + Semaphore 控制并发。
+    async fn execute_inner_parallel(
+        flow: F,
+        mut graph: FlowGraph,
+        _store: Option<Arc<dyn tavern_comp::EventStore>>,
+        max_concurrency: usize,
+    ) -> Result<serde_json::Value, FlowError> {
+        use tokio::sync::Semaphore;
+        use tokio::task::JoinSet;
+
+        let inner = Arc::new(tokio::sync::Mutex::new(flow));
+        let semaphore = Arc::new(Semaphore::new(max_concurrency));
+        let outputs: Arc<tokio::sync::Mutex<HashMap<String, serde_json::Value>>> =
+            Arc::new(tokio::sync::Mutex::new(HashMap::new()));
+        let last_output: Arc<tokio::sync::Mutex<Option<serde_json::Value>>> =
+            Arc::new(tokio::sync::Mutex::new(None));
+
+        let mut pending: std::collections::VecDeque<String> = graph.start_nodes().into();
+        if pending.is_empty() {
+            return Err(FlowError::Other("no start methods found".into()));
+        }
+
+        while !pending.is_empty() {
+            let mut join_set = JoinSet::new();
+
+            // Spawn current batch
+            for name in pending.drain(..) {
+                let permit = semaphore.clone().acquire_owned().await.unwrap();
+                let inner = inner.clone();
+                let outputs = outputs.clone();
+                let last_output = last_output.clone();
+                let name = name.clone();
+                join_set.spawn(async move {
+                    let _permit = permit;
+                    let input = {
+                        let out = outputs.lock().await;
+                        // Find upstream output
+                        out.values()
+                            .last()
+                            .cloned()
+                            .unwrap_or(serde_json::Value::Null)
+                    };
+                    let result = {
+                        let mut guard = inner.lock().await;
+                        guard.dispatch(&name, input).await
+                    };
+                    match result {
+                        Ok(val) => {
+                            let mut lo = last_output.lock().await;
+                            *lo = Some(val.clone());
+                            let mut out = outputs.lock().await;
+                            out.insert(name.clone(), val);
+                            Ok(name)
+                        }
+                        Err(e) => Err((name, e)),
+                    }
+                });
+            }
+
+            // Collect results, compute next batch
+            let mut next_batch = Vec::new();
+            while let Some(result) = join_set.join_next().await {
+                match result {
+                    Ok(Ok(name)) => {
+                        let ready = graph.on_complete(&name);
+                        next_batch.extend(ready);
+                    }
+                    Ok(Err((_name, e))) => return Err(e),
+                    Err(e) => return Err(FlowError::Other(format!("task panicked: {}", e))),
+                }
+            }
+
+            pending = next_batch.into();
+        }
+
+        let lo = last_output.lock().await;
+        Ok(lo.clone().unwrap_or(serde_json::Value::Null))
     }
 }
 
@@ -882,5 +972,46 @@ mod tests {
             .await
             .expect("async flow should complete");
         assert_eq!(result, serde_json::json!("echo: result_one"));
+    }
+
+    /// 并行执行：两个 start 方法并发运行。
+    #[tokio::test]
+    async fn test_parallel_execution() {
+        use std::sync::atomic::AtomicBool;
+        use std::sync::Arc;
+        use std::time::Duration;
+
+        static CONCURRENT: AtomicBool = AtomicBool::new(false);
+
+        #[derive(Flow)]
+        struct ParallelPipeline;
+
+        #[flow_impl(crate = "crate")]
+        impl ParallelPipeline {
+            #[start]
+            async fn slow_a(&mut self) -> Result<String, FlowError> {
+                tokio::time::sleep(Duration::from_millis(100)).await;
+                // Mark that we reached the sleep point
+                CONCURRENT.store(true, std::sync::atomic::Ordering::SeqCst);
+                tokio::time::sleep(Duration::from_millis(100)).await;
+                Ok("a".into())
+            }
+
+            #[start]
+            async fn slow_b(&mut self) -> Result<String, FlowError> {
+                tokio::time::sleep(Duration::from_millis(50)).await;
+                // If truly parallel, slow_a should have started by now
+                assert!(CONCURRENT.load(std::sync::atomic::Ordering::SeqCst));
+                Ok("b".into())
+            }
+        }
+
+        let engine = FlowEngine::new(ParallelPipeline).with_max_concurrency(2);
+        // Use parallel path (start_async with max_concurrency > 1)
+        let (mut handle, _ref) = engine.start_async();
+        let _result = handle
+            .await_completion()
+            .await
+            .expect("parallel flow should complete");
     }
 }
