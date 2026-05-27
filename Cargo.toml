@@ -6,6 +6,8 @@ members = [
     "crates/tavern-comp",
     "crates/tavern-config",
     "crates/tavern-server",
+    "crates/tavern-flow-macros",
+    "crates/tavern-flow",
 ]
 resolver = "2"
 
