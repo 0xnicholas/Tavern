@@ -72,7 +72,7 @@ pub fn flow_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
         }
     };
 
-    let mut start_list: Vec<String> = Vec::new();
+    let mut methods_info: Vec<proc_macro2::TokenStream> = Vec::new();
     let mut dispatch_arms: Vec<proc_macro2::TokenStream> = Vec::new();
     let mut pass_through: Vec<proc_macro2::TokenStream> = Vec::new();
     let mut wrappers: Vec<proc_macro2::TokenStream> = Vec::new();
@@ -87,9 +87,19 @@ pub fn flow_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
                     let name_str = method_name.to_string();
                     let wrapper_name = format_ident!("__flow_wrapper_{}", name_str);
 
-                    if matches!(flow_attr, Some(FlowMethodAttr::Start)) {
-                        start_list.push(name_str.clone());
-                    }
+                    let is_start = matches!(flow_attr, Some(FlowMethodAttr::Start));
+                    let listen_target = match &flow_attr {
+                        Some(FlowMethodAttr::Listen(target)) => target.clone(),
+                        _ => String::new(),
+                    };
+
+                    methods_info.push(quote! {
+                        #crate_path::MethodInfo {
+                            name: #name_str.to_string(),
+                            is_start: #is_start,
+                            listens_to: vec![#listen_target.to_string()],
+                        }
+                    });
 
                     // Build wrapper method signature
                     let mut wrapper_inputs: Vec<FnArg> = Vec::new();
@@ -174,8 +184,6 @@ pub fn flow_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
         }
     }
 
-    let start_names: Vec<String> = start_list.iter().cloned().collect();
-
     let expanded = quote! {
         impl #struct_name {
             #(#pass_through)*
@@ -200,7 +208,7 @@ pub fn flow_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
         impl #crate_path::Flow for #struct_name {
             fn metadata() -> #crate_path::FlowMetadata {
                 #crate_path::FlowMetadata {
-                    start_methods: vec![#(#start_names.to_string()),*],
+                    methods: vec![#(#methods_info),*],
                 }
             }
         }

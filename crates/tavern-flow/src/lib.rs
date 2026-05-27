@@ -26,18 +26,25 @@ use std::collections::HashMap;
 
 pub use tavern_flow_macros::{flow_impl, listen, start, Flow};
 
-/// Flow 元数据：入口方法列表。
+/// Flow 元数据。
 #[derive(Debug, Clone)]
 pub struct FlowMetadata {
-    pub start_methods: Vec<String>,
+    pub methods: Vec<MethodInfo>,
 }
 
 impl Default for FlowMetadata {
     fn default() -> Self {
-        Self {
-            start_methods: vec![],
-        }
+        Self { methods: vec![] }
     }
+}
+
+/// 单个方法的元数据。
+#[derive(Debug, Clone)]
+pub struct MethodInfo {
+    pub name: String,
+    pub is_start: bool,
+    /// 监听的方法名列表
+    pub listens_to: Vec<String>,
 }
 
 /// Flow trait — 由 `#[derive(Flow)]` 自动实现。
@@ -70,39 +77,45 @@ pub enum FlowError {
     Other(String),
 }
 
-/// FlowGraph 中的方法节点。
-#[derive(Debug, Clone)]
-struct MethodNode {
-    name: String,
-    is_start: bool,
-    listeners: Vec<Listener>,
-}
-
-#[derive(Debug, Clone)]
-enum Listener {
-    Single(String),
-}
-
 /// FlowGraph — 方法依赖图。
 pub(crate) struct FlowGraph {
-    nodes: HashMap<String, MethodNode>,
+    nodes: HashMap<String, MethodInfo>,
+    /// 下游依赖: method_name -> [下游 methods]
+    downstream: HashMap<String, Vec<String>>,
+    /// 上游依赖计数: method_name -> 未完成的上游数
+    in_degree: HashMap<String, usize>,
 }
 
 impl FlowGraph {
     pub fn from_metadata(meta: &FlowMetadata) -> Self {
-        // In the prototype, we only have start methods
-        let mut nodes = HashMap::new();
-        for name in &meta.start_methods {
-            nodes.insert(
-                name.clone(),
-                MethodNode {
-                    name: name.clone(),
-                    is_start: true,
-                    listeners: vec![],
-                },
-            );
+        let nodes: HashMap<String, MethodInfo> = meta
+            .methods
+            .iter()
+            .map(|m| (m.name.clone(), m.clone()))
+            .collect();
+
+        // Build downstream map and in-degree
+        let mut downstream: HashMap<String, Vec<String>> = HashMap::new();
+        let mut in_degree: HashMap<String, usize> = HashMap::new();
+
+        for method in &meta.methods {
+            downstream.entry(method.name.clone()).or_default();
+            in_degree.entry(method.name.clone()).or_insert(0);
+
+            for upstream in &method.listens_to {
+                downstream
+                    .entry(upstream.clone())
+                    .or_default()
+                    .push(method.name.clone());
+                *in_degree.entry(method.name.clone()).or_insert(0) += 1;
+            }
         }
-        Self { nodes }
+
+        Self {
+            nodes,
+            downstream,
+            in_degree,
+        }
     }
 
     pub fn start_nodes(&self) -> Vec<String> {
@@ -111,6 +124,29 @@ impl FlowGraph {
             .filter(|n| n.is_start)
             .map(|n| n.name.clone())
             .collect()
+    }
+
+    /// 获取当 method_name 完成后的下游就绪方法。
+    pub fn on_complete(&mut self, method_name: &str) -> Vec<String> {
+        let mut ready = Vec::new();
+        if let Some(deps) = self.downstream.get(method_name).cloned() {
+            for dep in deps {
+                if let Some(count) = self.in_degree.get_mut(&dep) {
+                    *count = count.saturating_sub(1);
+                    if *count == 0 {
+                        ready.push(dep.clone());
+                    }
+                }
+            }
+        }
+        ready
+    }
+
+    /// 获取方法的上游输入源（第一个 listens_to）。
+    pub fn upstream_for(&self, method_name: &str) -> Option<String> {
+        self.nodes
+            .get(method_name)
+            .and_then(|m| m.listens_to.first().cloned())
     }
 }
 
@@ -127,7 +163,7 @@ impl<F: Flow + FlowDispatch> FlowEngine<F> {
         Self { flow, graph }
     }
 
-    /// 同步执行 flow（原型阶段简化：只执行 #[start] 方法）。
+    /// 执行完整 flow（事件循环，顺序执行）。
     pub async fn execute(
         &mut self,
         _inputs: serde_json::Value,
@@ -137,13 +173,33 @@ impl<F: Flow + FlowDispatch> FlowEngine<F> {
             return Err(FlowError::Other("no start methods found".to_string()));
         }
 
-        // For prototype: execute only the first start method
-        let method = &starts[0];
-        let result = self
-            .flow
-            .dispatch(method.as_str(), serde_json::Value::Null)
-            .await?;
-        Ok(result)
+        let mut pending: std::collections::VecDeque<String> = starts.into();
+        let mut outputs: HashMap<String, serde_json::Value> = HashMap::new();
+        let mut last_output: Option<serde_json::Value> = None;
+
+        while let Some(method_name) = pending.pop_front() {
+            // Determine input: for start methods, use Null; for listeners, use upstream output
+            let input = self
+                .graph
+                .upstream_for(&method_name)
+                .and_then(|up| outputs.get(&up).cloned())
+                .unwrap_or(serde_json::Value::Null);
+
+            match self.flow.dispatch(&method_name, input).await {
+                Ok(output) => {
+                    last_output = Some(output.clone());
+                    outputs.insert(method_name.clone(), output);
+
+                    let next = self.graph.on_complete(&method_name);
+                    for n in next {
+                        pending.push_back(n);
+                    }
+                }
+                Err(e) => return Err(e),
+            }
+        }
+
+        Ok(last_output.unwrap_or(serde_json::Value::Null))
     }
 
     /// 异步启动执行（后续实现）。
@@ -165,17 +221,31 @@ mod tests {
     #[test]
     fn test_flow_metadata_default() {
         let meta = FlowMetadata::default();
-        assert!(meta.start_methods.is_empty());
+        assert!(meta.methods.is_empty());
     }
 
     /// 测试 FlowGraph 从 metadata 构建。
     #[test]
     fn test_flow_graph_from_metadata() {
         let meta = FlowMetadata {
-            start_methods: vec!["step_a".to_string()],
+            methods: vec![
+                MethodInfo {
+                    name: "step_a".to_string(),
+                    is_start: true,
+                    listens_to: vec![],
+                },
+                MethodInfo {
+                    name: "step_b".to_string(),
+                    is_start: false,
+                    listens_to: vec!["step_a".to_string()],
+                },
+            ],
         };
-        let graph = FlowGraph::from_metadata(&meta);
+        let mut graph = FlowGraph::from_metadata(&meta);
         assert_eq!(graph.start_nodes(), vec!["step_a"]);
+        // step_b should become ready after step_a completes
+        let next = graph.on_complete("step_a");
+        assert_eq!(next, vec!["step_b"]);
     }
 
     // ── Proc-macro 原型验证: 手动展开版 ──
@@ -252,7 +322,18 @@ mod tests {
     impl Flow for ManualPipeline {
         fn metadata() -> FlowMetadata {
             FlowMetadata {
-                start_methods: vec!["step_a".to_string()],
+                methods: vec![
+                    MethodInfo {
+                        name: "step_a".to_string(),
+                        is_start: true,
+                        listens_to: vec![],
+                    },
+                    MethodInfo {
+                        name: "step_b".to_string(),
+                        is_start: false,
+                        listens_to: vec!["step_a".to_string()],
+                    },
+                ],
             }
         }
     }
@@ -325,7 +406,13 @@ mod tests {
     #[test]
     fn test_macro_flow_metadata() {
         let meta = MacroPipeline::metadata();
-        assert_eq!(meta.start_methods, vec!["step_one"]);
+        assert_eq!(meta.methods.len(), 2);
+        let step_one = &meta.methods[0];
+        assert_eq!(step_one.name, "step_one");
+        assert!(step_one.is_start);
+        let step_two = &meta.methods[1];
+        assert_eq!(step_two.name, "step_two");
+        assert_eq!(step_two.listens_to, vec!["step_one"]);
     }
 
     #[tokio::test]
@@ -355,5 +442,22 @@ mod tests {
             .await
             .expect("dispatch should succeed");
         assert_eq!(result, serde_json::json!("echo: hello"));
+    }
+
+    /// FlowEngine 完整事件循环：start → listen chain。
+    #[tokio::test]
+    async fn test_flow_engine_event_loop() {
+        let mut pipeline = MacroPipeline {
+            state: MacroState {
+                value: String::new(),
+            },
+        };
+
+        let mut engine = FlowEngine::new(pipeline);
+        let result = engine
+            .execute(serde_json::Value::Null)
+            .await
+            .expect("event loop should complete");
+        assert_eq!(result, serde_json::json!("echo: result_one"));
     }
 }
