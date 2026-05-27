@@ -75,6 +75,12 @@ pub enum CompError {
 
     #[error("planning agent '{id}' not registered")]
     PlanningAgentNotRegistered { id: String },
+
+    #[error("invalid replay range: {reason}")]
+    InvalidReplayRange { reason: String },
+
+    #[error("invalid parameter '{field}': {reason}")]
+    InvalidParameter { field: String, reason: String },
 }
 
 impl Clone for CompError {
@@ -127,6 +133,13 @@ impl Clone for CompError {
             CompError::PlanningAgentNotRegistered { id } => {
                 CompError::PlanningAgentNotRegistered { id: id.clone() }
             }
+            CompError::InvalidReplayRange { reason } => CompError::InvalidReplayRange {
+                reason: reason.clone(),
+            },
+            CompError::InvalidParameter { field, reason } => CompError::InvalidParameter {
+                field: field.clone(),
+                reason: reason.clone(),
+            },
         }
     }
 }
