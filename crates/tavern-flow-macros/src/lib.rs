@@ -4,7 +4,7 @@ use proc_macro::TokenStream;
 use quote::{format_ident, quote};
 use syn::{
     parse_macro_input, punctuated::Punctuated, spanned::Spanned, token::Comma, Attribute,
-    DeriveInput, FnArg, ImplItem, ItemImpl, Pat, Type,
+    DeriveInput, FnArg, ImplItem, ItemImpl, LitStr, Pat, Type,
 };
 
 // ── Helpers ──

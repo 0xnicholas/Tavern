@@ -186,7 +186,8 @@ impl FlowGraph {
     /// 获取当 method_name 完成后的下游就绪方法。
     pub fn on_complete(&mut self, method_name: &str) -> Vec<String> {
         let mut ready = Vec::new();
-        if let Some(deps) = self.downstream.get(method_name).cloned() {
+        if let Some(deps) = self.downstream.get(method_name) {
+            let deps: Vec<String> = deps.clone();
             for dep in deps {
                 if let Some(count) = self.in_degree.get_mut(&dep) {
                     *count = count.saturating_sub(1);
@@ -224,7 +225,7 @@ impl FlowGraph {
 }
 
 /// FlowEngine — 方法图事件循环执行引擎。
-pub struct FlowEngine<F: Flow + FlowDispatch> {
+pub struct FlowEngine<F> {
     flow: F,
     graph: FlowGraph,
 }
@@ -242,7 +243,7 @@ impl<F: Flow + FlowDispatch + Send + 'static> FlowEngine<F> {
 
         tokio::spawn(async move {
             let mut engine = self;
-            let result = engine.execute_inner(serde_json::Value::Null).await;
+            let result = engine.execute_inner().await;
             let _ = tx.send(result);
         });
 
@@ -256,18 +257,11 @@ impl<F: Flow + FlowDispatch + Send + 'static> FlowEngine<F> {
         &mut self,
         _inputs: serde_json::Value,
     ) -> Result<serde_json::Value, FlowError> {
-        let starts = self.graph.start_nodes();
-        if starts.is_empty() {
-            return Err(FlowError::Other("no start methods found".to_string()));
-        }
-        self.execute_inner(serde_json::Value::Null).await
+        self.execute_inner().await
     }
 
     /// 内部事件循环实现。
-    async fn execute_inner(
-        &mut self,
-        _inputs: serde_json::Value,
-    ) -> Result<serde_json::Value, FlowError> {
+    async fn execute_inner(&mut self) -> Result<serde_json::Value, FlowError> {
         let starts = self.graph.start_nodes();
         if starts.is_empty() {
             return Err(FlowError::Other("no start methods found".to_string()));
@@ -325,12 +319,6 @@ impl<F: Flow + FlowDispatch + Send + 'static> FlowEngine<F> {
         }
 
         Ok(last_output.unwrap_or(serde_json::Value::Null))
-    }
-
-    /// 异步启动执行（后续实现）。
-    #[allow(dead_code)]
-    pub async fn start(self, _inputs: serde_json::Value) -> Result<FlowHandle, FlowError> {
-        todo!()
     }
 }
 
