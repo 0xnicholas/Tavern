@@ -677,8 +677,6 @@ pub async fn refresh_token_handler(
 
 // ── Flow handlers ──
 
-use tavern_flow::FlowFactory;
-
 #[derive(Serialize)]
 pub struct FlowListResponse {
     pub flows: Vec<tavern_flow::registry::FlowSummary>,
