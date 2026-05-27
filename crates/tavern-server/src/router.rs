@@ -63,6 +63,23 @@ pub fn create_router(state: Arc<AppState>) -> Router {
     // Auth refresh (public, only works in bearer mode)
     public_routes = public_routes.route("/auth/refresh", post(handlers::refresh_token_handler));
 
+    // Flow endpoints
+    let mut flow_routes = Router::new()
+        .route("/flows", get(handlers::list_flows_handler))
+        .route("/flows/:id/start", post(handlers::start_flow_handler))
+        .route("/flows/:id/status", get(handlers::get_flow_status_handler))
+        .route("/flows/:id/cancel", post(handlers::cancel_flow_handler));
+
+    if auth_type != "none" {
+        flow_routes = flow_routes.layer(middleware::from_fn_with_state(
+            auth_config.clone(),
+            crate::auth::auth_middleware,
+        ));
+    }
+
+    // Merge flow routes into protected
+    protected_routes = protected_routes.merge(flow_routes);
+
     if auth_type != "none" {
         protected_routes = protected_routes.layer(middleware::from_fn_with_state(
             auth_config.clone(),

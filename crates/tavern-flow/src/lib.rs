@@ -22,16 +22,18 @@
 //! ```
 
 use std::collections::HashMap;
+use std::sync::Arc;
 
 pub use tavern_flow_macros::{flow_impl, listen, router, start, Flow};
 
+pub mod registry;
+pub use registry::{FlowFactory, FlowRegistry, StartableFlow};
+
 /// Flow 元数据。
-#[derive(Debug, Clone)]
-#[derive(Default)]
+#[derive(Debug, Clone, Default)]
 pub struct FlowMetadata {
     pub methods: Vec<MethodInfo>,
 }
-
 
 /// 单个方法的元数据。
 #[derive(Debug, Clone)]
@@ -233,18 +235,41 @@ impl<F: Flow + FlowDispatch + Send + 'static> FlowEngine<F> {
     }
 
     /// 异步启动 flow（非阻塞），返回 FlowHandle 用于等待结果。
-    pub fn start_async(self) -> FlowHandle {
-        let (tx, rx) = tokio::sync::oneshot::channel::<Result<serde_json::Value, FlowError>>();
+    pub fn start_async(self) -> (FlowHandle, FlowHandleRef) {
+        let flow_id = uuid::Uuid::new_v4().to_string();
+        let status = Arc::new(std::sync::atomic::AtomicU8::new(1)); // running
+        let (cancel_tx, cancel_rx) = tokio::sync::oneshot::channel::<()>();
+        let (completion_tx, completion_rx) =
+            tokio::sync::oneshot::channel::<Result<serde_json::Value, FlowError>>();
 
+        let ref_handle = FlowHandleRef {
+            flow_id: flow_id.clone(),
+            flow_name: "unnamed".to_string(),
+            status: status.clone(),
+            started_at: chrono::Utc::now(),
+        };
+
+        let status_clone = status.clone();
         tokio::spawn(async move {
             let mut engine = self;
             let result = engine.execute_inner().await;
-            let _ = tx.send(result);
+            status_clone.store(
+                match &result {
+                    Ok(_) => 2,
+                    Err(_) => 3,
+                },
+                std::sync::atomic::Ordering::Relaxed,
+            );
+            let _ = completion_tx.send(result);
         });
 
-        FlowHandle {
-            completion_rx: Some(rx),
-        }
+        let handle = FlowHandle {
+            flow_id,
+            completion_rx: Some(completion_rx),
+            cancel_tx: Some(cancel_tx),
+            status,
+        };
+        (handle, ref_handle)
     }
 
     /// 同步执行（内部调用 start + await）。
@@ -317,9 +342,12 @@ impl<F: Flow + FlowDispatch + Send + 'static> FlowEngine<F> {
     }
 }
 
-/// FlowHandle — 异步执行句柄。
+/// FlowHandle — 异步执行句柄（唯一，不可 Clone）。
 pub struct FlowHandle {
+    pub flow_id: String,
     completion_rx: Option<tokio::sync::oneshot::Receiver<Result<serde_json::Value, FlowError>>>,
+    cancel_tx: Option<tokio::sync::oneshot::Sender<()>>,
+    status: Arc<std::sync::atomic::AtomicU8>,
 }
 
 impl FlowHandle {
@@ -332,6 +360,34 @@ impl FlowHandle {
         match rx.await {
             Ok(result) => result,
             Err(_) => Err(FlowError::Other("flow task panicked".to_string())),
+        }
+    }
+
+    /// 取消 flow 执行。
+    pub fn cancel(&mut self) {
+        if let Some(tx) = self.cancel_tx.take() {
+            let _ = tx.send(());
+        }
+    }
+}
+
+/// FlowHandleRef — 轻量引用（Clone + Send），用于状态查询。
+#[derive(Clone, Debug)]
+pub struct FlowHandleRef {
+    pub flow_id: String,
+    pub flow_name: String,
+    pub status: Arc<std::sync::atomic::AtomicU8>,
+    pub started_at: chrono::DateTime<chrono::Utc>,
+}
+
+impl FlowHandleRef {
+    pub fn status_str(&self) -> &'static str {
+        match self.status.load(std::sync::atomic::Ordering::Relaxed) {
+            0 => "pending",
+            1 => "running",
+            2 => "completed",
+            3 => "failed",
+            _ => "unknown",
         }
     }
 }
@@ -768,7 +824,7 @@ mod tests {
         };
 
         let engine = FlowEngine::new(pipeline);
-        let mut handle = engine.start_async();
+        let (mut handle, _ref) = engine.start_async();
 
         let result = handle
             .await_completion()

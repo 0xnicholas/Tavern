@@ -129,6 +129,8 @@ async fn main() {
         event_store: event_store.clone(),
         execution_handles: execution_handles.clone(),
         event_broadcasts: event_broadcasts.clone(),
+        flow_registry: Arc::new(tavern_flow::FlowRegistry::new()),
+        flow_handles: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
         config: config.clone(),
     });
 
@@ -771,6 +773,8 @@ instructions: 研究
             event_store: Arc::new(tavern_comp::MemoryEventStore::new()),
             execution_handles: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
             event_broadcasts: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
+            flow_registry: Arc::new(tavern_flow::FlowRegistry::new()),
+            flow_handles: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
             config: tavern_config::TavernConfig::default(),
         }))
     }
@@ -1294,6 +1298,8 @@ instructions: 研究
             event_store: Arc::new(tavern_comp::MemoryEventStore::new()),
             execution_handles: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
             event_broadcasts: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
+            flow_registry: Arc::new(tavern_flow::FlowRegistry::new()),
+            flow_handles: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
             config: tavern_config::TavernConfig::default(),
         }));
 

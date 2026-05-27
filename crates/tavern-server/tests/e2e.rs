@@ -141,6 +141,8 @@ instructions: 编辑
         event_store: Arc::new(tavern_comp::MemoryEventStore::new()),
         execution_handles: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
         event_broadcasts: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
+        flow_registry: Arc::new(tavern_flow::FlowRegistry::new()),
+        flow_handles: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
         config: tavern_config::TavernConfig::default(),
     }))
 }
@@ -643,6 +645,8 @@ instructions: 编辑
         event_store: Arc::new(tavern_comp::MemoryEventStore::new()),
         execution_handles: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
         event_broadcasts: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
+        flow_registry: Arc::new(tavern_flow::FlowRegistry::new()),
+        flow_handles: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
         config,
     }))
 }

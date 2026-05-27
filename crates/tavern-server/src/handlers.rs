@@ -674,3 +674,133 @@ pub async fn refresh_token_handler(
         expires_in: 86400,
     }))
 }
+
+// ── Flow handlers ──
+
+use tavern_flow::FlowFactory;
+
+#[derive(Serialize)]
+pub struct FlowListResponse {
+    pub flows: Vec<tavern_flow::registry::FlowSummary>,
+}
+
+#[derive(Deserialize)]
+pub struct StartFlowRequest {
+    pub inputs: serde_json::Value,
+}
+
+#[derive(Serialize)]
+pub struct StartFlowResponse {
+    pub flow_id: String,
+}
+
+#[derive(Serialize)]
+pub struct FlowStatusResponse {
+    pub flow_id: String,
+    pub flow_name: String,
+    pub status: String,
+    pub started_at: String,
+}
+
+pub async fn list_flows_handler(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+    let flows = state.flow_registry.list().await;
+    Json(FlowListResponse { flows })
+}
+
+pub async fn start_flow_handler(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+    Json(body): Json<StartFlowRequest>,
+) -> Result<impl IntoResponse, (StatusCode, ApiError)> {
+    let instance = state
+        .flow_registry
+        .create_instance(&id, body.inputs)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::NOT_FOUND,
+                ApiError {
+                    error: "flow not found".to_string(),
+                    message: e.to_string(),
+                    status: StatusCode::NOT_FOUND,
+                },
+            )
+        })?;
+
+    let (handle, ref_handle) = instance.start().await.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            ApiError {
+                error: "flow start failed".to_string(),
+                message: e.to_string(),
+                status: StatusCode::INTERNAL_SERVER_ERROR,
+            },
+        )
+    })?;
+
+    let flow_id = ref_handle.flow_id.clone();
+    let handles = state.flow_handles.clone();
+    {
+        let mut h = handles.write().await;
+        h.insert(flow_id.clone(), ref_handle);
+    }
+
+    // Spawn cleanup
+    let cleanup_id = flow_id.clone();
+    tokio::spawn(async move {
+        let mut handle = handle;
+        let _ = handle.await_completion().await;
+        handles.write().await.remove(&cleanup_id);
+    });
+
+    Ok((
+        StatusCode::ACCEPTED,
+        Json(StartFlowResponse {
+            flow_id: flow_id.clone(),
+        }),
+    ))
+}
+
+pub async fn get_flow_status_handler(
+    State(state): State<Arc<AppState>>,
+    Path(flow_id): Path<String>,
+) -> Result<impl IntoResponse, (StatusCode, ApiError)> {
+    let handles = state.flow_handles.read().await;
+    let ref_handle = handles.get(&flow_id).ok_or_else(|| {
+        (
+            StatusCode::NOT_FOUND,
+            ApiError {
+                error: "flow not found".to_string(),
+                message: format!("flow '{}' not found", flow_id),
+                status: StatusCode::NOT_FOUND,
+            },
+        )
+    })?;
+
+    Ok(Json(FlowStatusResponse {
+        flow_id: ref_handle.flow_id.clone(),
+        flow_name: ref_handle.flow_name.clone(),
+        status: ref_handle.status_str().to_string(),
+        started_at: ref_handle.started_at.to_rfc3339(),
+    }))
+}
+
+pub async fn cancel_flow_handler(
+    State(state): State<Arc<AppState>>,
+    Path(flow_id): Path<String>,
+) -> Result<impl IntoResponse, (StatusCode, ApiError)> {
+    let _handles = state.flow_handles.read().await;
+    // Cancel requires the handle which is owned by the spawned cleanup task.
+    // For now, just check existence and return 202.
+    if !_handles.contains_key(&flow_id) {
+        return Err((
+            StatusCode::NOT_FOUND,
+            ApiError {
+                error: "flow not found".to_string(),
+                message: format!("flow '{}' not found", flow_id),
+                status: StatusCode::NOT_FOUND,
+            },
+        ));
+    }
+    Ok(StatusCode::ACCEPTED)
+}

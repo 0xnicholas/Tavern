@@ -13,6 +13,7 @@ path = "src/main.rs"
 tavern-core = { path = "../tavern-core" }
 tavern-hero = { path = "../tavern-hero" }
 tavern-comp = { path = "../tavern-comp" }
+tavern-flow = { path = "../tavern-flow" }
 tavern-adapters = { path = "../tavern-adapters" }
 tavern-config = { path = "../tavern-config" }
 serde = { version = "1.0", features = ["derive"] }
