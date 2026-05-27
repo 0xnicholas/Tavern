@@ -48,6 +48,10 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         .route(
             "/executions/:id/cancel",
             post(handlers::cancel_execution_handler),
+        )
+        .route(
+            "/executions/:id/events/stream",
+            get(crate::sse::execution_events_stream_handler),
         );
 
     if metrics_public {
@@ -55,6 +59,9 @@ pub fn create_router(state: Arc<AppState>) -> Router {
     } else {
         protected_routes = protected_routes.route("/metrics", get(handlers::metrics_handler));
     }
+
+    // Auth refresh (public, only works in bearer mode)
+    public_routes = public_routes.route("/auth/refresh", post(handlers::refresh_token_handler));
 
     if auth_type != "none" {
         protected_routes = protected_routes.layer(middleware::from_fn_with_state(

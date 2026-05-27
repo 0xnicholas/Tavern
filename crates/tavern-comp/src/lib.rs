@@ -19,6 +19,8 @@ pub use executor::StepExecutor;
 pub use handle::ExecutionHandle;
 pub use instance::{InstanceState, InstanceStatus};
 pub use registry::{WorkflowRegistry, WorkflowSummary};
+#[cfg(feature = "postgres")]
+pub use store::PostgreSQLEventStore;
 #[cfg(feature = "sqlite")]
 pub use store::SqliteEventStore;
 pub use store::{EventStore, MemoryEventStore};

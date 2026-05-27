@@ -35,7 +35,8 @@ impl PandariaRuntime {
         // Auto-generate token from PANDARIA_AUTH_SECRET if PANDARIA_AUTH_TOKEN not set
         let auth_token = std::env::var("PANDARIA_AUTH_TOKEN").ok().or_else(|| {
             std::env::var("PANDARIA_AUTH_SECRET").ok().map(|secret| {
-                let tenant_id = std::env::var("PANDARIA_TENANT_ID").unwrap_or_else(|_| "default".to_string());
+                let tenant_id =
+                    std::env::var("PANDARIA_TENANT_ID").unwrap_or_else(|_| "default".to_string());
                 let token = generate_token(&tenant_id, &secret);
                 tracing::info!("auto-generated Pandaria token from PANDARIA_AUTH_SECRET");
                 token

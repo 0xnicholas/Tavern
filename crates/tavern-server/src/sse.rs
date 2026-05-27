@@ -1,5 +1,3 @@
-#![allow(dead_code, unused_imports)]
-
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -10,11 +8,11 @@ use axum::{
 };
 use serde::Deserialize;
 use tokio::sync::{broadcast, RwLock};
-use tokio_stream::wrappers::BroadcastStream;
+use tokio_stream::{wrappers::BroadcastStream, StreamExt};
 
 use tavern_comp::{CompError, EventStore, WorkflowEvent};
 
-use crate::state::AppState;
+use crate::state::{AppState, EventBroadcasts};
 
 #[derive(Debug, Deserialize)]
 pub struct SseAuthQuery {
@@ -24,7 +22,7 @@ pub struct SseAuthQuery {
 /// BroadcastingEventStore: 包装任意 EventStore，在 append 成功后广播事件。
 pub struct BroadcastingEventStore {
     inner: Arc<dyn EventStore>,
-    broadcasts: Arc<RwLock<HashMap<String, broadcast::Sender<WorkflowEvent>>>>,
+    broadcasts: EventBroadcasts,
 }
 
 impl BroadcastingEventStore {
@@ -35,18 +33,15 @@ impl BroadcastingEventStore {
         }
     }
 
-    pub fn get_or_create_sender(&self, instance_id: &str) -> broadcast::Receiver<WorkflowEvent> {
-        let _broadcasts = self.broadcasts.clone();
-        let _id = instance_id.to_string();
-        unreachable!("use subscribe method instead")
+    pub fn with_broadcasts(inner: Arc<dyn EventStore>, broadcasts: EventBroadcasts) -> Self {
+        Self { inner, broadcasts }
     }
 
-    pub async fn subscribe(&self, instance_id: &str) -> broadcast::Receiver<WorkflowEvent> {
+    pub async fn pre_create_sender(&self, instance_id: &str) {
         let mut broadcasts = self.broadcasts.write().await;
-        let sender = broadcasts
+        broadcasts
             .entry(instance_id.to_string())
             .or_insert_with(|| broadcast::channel::<WorkflowEvent>(128).0);
-        sender.subscribe()
     }
 
     pub async fn cleanup(&self, instance_id: &str) {
@@ -97,7 +92,7 @@ impl EventStore for BroadcastingEventStore {
 /// SSE handler: 实时推送工作流实例的事件流。
 pub async fn execution_events_stream_handler(
     State(state): State<Arc<AppState>>,
-    Path(_id): Path<String>,
+    Path(id): Path<String>,
     Query(query): Query<SseAuthQuery>,
 ) -> Result<Sse<impl tokio_stream::Stream<Item = Result<Event, axum::Error>>>, StatusCode> {
     // Auth check (same logic as auth middleware)
@@ -117,12 +112,76 @@ pub async fn execution_events_stream_handler(
         }
     }
 
-    // For SSE with BroadcastingEventStore, we'd need the store to support subscription.
-    // Since AppState.event_store is Arc<dyn EventStore>, we cannot directly access BroadcastingEventStore.
-    // This handler serves as the endpoint; actual SSE streaming requires the store to be a BroadcastingEventStore.
-    // For now, return an empty SSE stream as placeholder (full integration in Phase 4 follow-up).
-    let stream = tokio_stream::iter(vec![]);
-    Ok(Sse::new(stream))
+    // Subscribe to the broadcast channel for this instance.
+    // If no sender exists yet, create one (the workflow may not have started yet).
+    let rx = {
+        let mut broadcasts = state.event_broadcasts.write().await;
+        let sender = broadcasts
+            .entry(id.clone())
+            .or_insert_with(|| broadcast::channel::<WorkflowEvent>(128).0);
+        sender.subscribe()
+    };
+
+    let stream = BroadcastStream::new(rx).filter_map(|result| match result {
+        Ok(event) => {
+            let json = serde_json::to_string(&event).ok()?;
+            Some(Ok(Event::default().data(json)))
+        }
+        Err(_) => None,
+    });
+
+    Ok(Sse::new(stream).keep_alive(axum::response::sse::KeepAlive::default()))
 }
 
 use axum::http::StatusCode;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tavern_comp::MemoryEventStore;
+
+    #[tokio::test]
+    async fn test_broadcasting_store_subscribe_and_receive() {
+        let inner: Arc<dyn EventStore> = Arc::new(MemoryEventStore::new());
+        let broadcasts = Arc::new(RwLock::new(HashMap::new()));
+        let store = BroadcastingEventStore::with_broadcasts(inner, broadcasts.clone());
+
+        // Subscribe before append
+        let mut rx = {
+            let (tx, rx) = broadcast::channel::<WorkflowEvent>(16);
+            broadcasts.write().await.insert("inst-1".to_string(), tx);
+            rx
+        };
+
+        // Append event
+        let event = WorkflowEvent::InstanceStarted;
+        store.append("inst-1", event.clone()).await.unwrap();
+
+        // Should receive the event
+        let received = tokio::time::timeout(std::time::Duration::from_secs(1), rx.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(matches!(received, WorkflowEvent::InstanceStarted));
+    }
+
+    #[tokio::test]
+    async fn test_broadcasting_store_cleanup_removes_sender() {
+        let inner: Arc<dyn EventStore> = Arc::new(MemoryEventStore::new());
+        let broadcasts = Arc::new(RwLock::new(HashMap::new()));
+        let store = BroadcastingEventStore::with_broadcasts(inner, broadcasts.clone());
+
+        // Insert a sender
+        let (tx, _rx) = broadcast::channel::<WorkflowEvent>(16);
+        broadcasts.write().await.insert("inst-2".to_string(), tx);
+
+        // Verify it exists
+        assert!(broadcasts.read().await.contains_key("inst-2"));
+
+        // Cleanup
+        store.cleanup("inst-2").await;
+
+        // Should be gone
+        assert!(!broadcasts.read().await.contains_key("inst-2"));
+    }
+}

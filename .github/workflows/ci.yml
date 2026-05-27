@@ -47,6 +47,8 @@ jobs:
 
   sqlx-prepare:
     runs-on: ubuntu-latest
+    env:
+      DATABASE_URL: sqlite::memory:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable

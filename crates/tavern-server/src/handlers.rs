@@ -368,12 +368,23 @@ pub async fn start_workflow_handler(
         handles.insert(execution_id.clone(), signal_tx);
     }
 
+    // Pre-create broadcast sender for SSE subscriptions
+    {
+        let mut broadcasts = state.event_broadcasts.write().await;
+        broadcasts.entry(execution_id.clone()).or_insert_with(|| {
+            tokio::sync::broadcast::channel::<tavern_comp::WorkflowEvent>(128).0
+        });
+    }
+
     let exec_id = execution_id.clone();
     let handles_arc = state.execution_handles.clone();
+    let broadcasts_arc = state.event_broadcasts.clone();
     tokio::spawn(async move {
         let _ = interpreter_handle.await;
         let mut handles = handles_arc.write().await;
         handles.remove(&exec_id);
+        let mut broadcasts = broadcasts_arc.write().await;
+        broadcasts.remove(&exec_id);
     });
 
     Ok((
@@ -599,4 +610,67 @@ pub async fn metrics_handler(State(state): State<Arc<AppState>>) -> impl IntoRes
         )],
         body,
     )
+}
+
+// ── Auth ──
+
+#[derive(Serialize)]
+pub struct TokenRefreshResponse {
+    pub token: String,
+    pub expires_in: u64,
+}
+
+/// 刷新 Bearer Token。
+/// 仅在 auth.type = "bearer" 时可用；api_key 模式下返回 400。
+pub async fn refresh_token_handler(
+    State(state): State<Arc<AppState>>,
+) -> Result<impl IntoResponse, (StatusCode, ApiError)> {
+    if state.config.auth.auth_type != "bearer" {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            ApiError {
+                error: "auth mode not supported".to_string(),
+                message: "token refresh is only available with auth.type = 'bearer'".to_string(),
+                status: StatusCode::BAD_REQUEST,
+            },
+        ));
+    }
+
+    let secret = &state.config.auth.jwt_secret;
+    let secret = if secret.is_empty() {
+        "tavern-default-secret"
+    } else {
+        secret
+    };
+
+    let expiration = chrono::Utc::now()
+        .checked_add_signed(chrono::TimeDelta::hours(24))
+        .unwrap()
+        .timestamp() as usize;
+
+    let claims = serde_json::json!({
+        "sub": "tavern",
+        "exp": expiration,
+    });
+
+    let token = jsonwebtoken::encode(
+        &jsonwebtoken::Header::default(),
+        &claims,
+        &jsonwebtoken::EncodingKey::from_secret(secret.as_bytes()),
+    )
+    .map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            ApiError {
+                error: "token generation failed".to_string(),
+                message: e.to_string(),
+                status: StatusCode::INTERNAL_SERVER_ERROR,
+            },
+        )
+    })?;
+
+    Ok(Json(TokenRefreshResponse {
+        token,
+        expires_in: 86400,
+    }))
 }

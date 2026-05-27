@@ -73,7 +73,10 @@ fn default_workflow() -> tavern_comp::Workflow {
     }
 }
 
-async fn create_test_app_with_workflow<F>(handler: F, workflow: tavern_comp::Workflow) -> axum::Router
+async fn create_test_app_with_workflow<F>(
+    handler: F,
+    workflow: tavern_comp::Workflow,
+) -> axum::Router
 where
     F: Fn(&str, &str, Option<Value>, &str, &str) -> Result<Value, tavern_core::RuntimeError>
         + Send
@@ -137,6 +140,7 @@ instructions: 编辑
         max_concurrency: usize::MAX,
         event_store: Arc::new(tavern_comp::MemoryEventStore::new()),
         execution_handles: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
+        event_broadcasts: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
         config: tavern_config::TavernConfig::default(),
     }))
 }
@@ -559,6 +563,292 @@ async fn test_end_to_end_workflow_crud() {
             Request::builder()
                 .uri("/workflows/crud_test")
                 .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+}
+
+// ── SSE & Auth tests ──
+
+async fn create_test_app_with_auth(auth_type: &str, keys: Vec<&str>) -> axum::Router {
+    let runtime: Arc<dyn Runtime> = Arc::new(MockRuntime::new(
+        |_agent_id, task, _context, _sp, _model| {
+            Ok(match task {
+                t if t.starts_with("research") => json!("research notes"),
+                t if t.starts_with("write") => json!("draft article"),
+                _ => json!("final article"),
+            })
+        },
+    ));
+    let hero = TavernHero::new(runtime);
+
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("agent.yaml"),
+        r#"
+id: researcher
+name: 研究员
+model:
+  provider: openai
+  name: gpt-4o
+instructions: 研究
+"#,
+    )
+    .unwrap();
+    std::fs::write(
+        dir.path().join("writer.yaml"),
+        r#"
+id: writer
+name: 作家
+model:
+  provider: openai
+  name: gpt-4o
+instructions: 写作
+"#,
+    )
+    .unwrap();
+    std::fs::write(
+        dir.path().join("editor.yaml"),
+        r#"
+id: editor
+name: 编辑
+model:
+  provider: openai
+  name: gpt-4o
+instructions: 编辑
+"#,
+    )
+    .unwrap();
+    hero.load_from_dir(dir.path()).await.unwrap();
+    let hero = Arc::new(hero);
+
+    let mut registry = tavern_comp::WorkflowRegistry::new();
+    registry.register(default_workflow()).unwrap();
+    let registry = Arc::new(tokio::sync::RwLock::new(registry));
+
+    let mut config = tavern_config::TavernConfig::default();
+    config.auth.auth_type = auth_type.to_string();
+    config.auth.keys = keys.iter().map(|k| k.to_string()).collect();
+
+    router::create_router(Arc::new(AppState {
+        hero,
+        registry,
+        workflow_config_dir: "./configs/workflows".to_string(),
+        workflow_executions: Arc::new(AtomicU64::new(0)),
+        workflow_failures: Arc::new(AtomicU64::new(0)),
+        workflow_duration_ms_total: Arc::new(AtomicU64::new(0)),
+        max_concurrency: usize::MAX,
+        event_store: Arc::new(tavern_comp::MemoryEventStore::new()),
+        execution_handles: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
+        event_broadcasts: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
+        config,
+    }))
+}
+
+/// SSE endpoint returns 200 and correct content-type.
+#[tokio::test]
+async fn test_sse_events_stream_endpoint_accessible() {
+    let app = create_test_app().await;
+
+    // First start a workflow to get an execution_id
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/workflows/content_pipeline/start")
+                .header("content-type", "application/json")
+                .body(Body::from(json!({"topic": "test"}).to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let result = response_json(response).await;
+    let execution_id = result["execution_id"].as_str().unwrap().to_string();
+
+    // Connect to SSE endpoint
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri(format!("/executions/{}/events/stream", execution_id))
+                .header("accept", "text/event-stream")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let content_type = response
+        .headers()
+        .get("content-type")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    assert!(
+        content_type.contains("text/event-stream"),
+        "expected text/event-stream, got {}",
+        content_type
+    );
+}
+
+/// SSE endpoint returns 401 when auth is enabled and no api_key provided.
+#[tokio::test]
+async fn test_sse_events_stream_requires_auth() {
+    let app = create_test_app_with_auth("api_key", vec!["sk-test-123"]).await;
+
+    // Start workflow
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/workflows/content_pipeline/start")
+                .header("content-type", "application/json")
+                .header("x-api-key", "sk-test-123")
+                .body(Body::from(json!({"topic": "test"}).to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let status = response.status();
+    let body_text = String::from_utf8(
+        axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap()
+            .to_vec(),
+    )
+    .unwrap_or_default();
+    assert_eq!(
+        status,
+        StatusCode::ACCEPTED,
+        "expected 202, got {}: {}",
+        status,
+        body_text
+    );
+    let result: Value = serde_json::from_str(&body_text).unwrap();
+    let execution_id = result["execution_id"].as_str().unwrap().to_string();
+
+    // Without api_key → 401
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/executions/{}/events/stream", execution_id))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+
+    // With valid api_key → 200
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri(format!(
+                    "/executions/{}/events/stream?api_key=sk-test-123",
+                    execution_id
+                ))
+                .header("accept", "text/event-stream")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+}
+
+/// Protected endpoints require auth when api_key mode is enabled.
+#[tokio::test]
+async fn test_auth_middleware_blocks_unauthenticated() {
+    let app = create_test_app_with_auth("api_key", vec!["sk-test-456"]).await;
+
+    // Health is public
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/health")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+
+    // Agents requires auth
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/agents")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+
+    // With valid key → 200
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/agents")
+                .header("x-api-key", "sk-test-456")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+
+    // With invalid key → 401
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/agents")
+                .header("x-api-key", "wrong-key")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+}
+
+/// Workflow reload endpoint works.
+#[tokio::test]
+async fn test_reload_workflows_endpoint() {
+    let app = create_test_app().await;
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/workflows/reload")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::NO_CONTENT);
+}
+
+/// POST /workflows/:id/run returns 404 for missing workflow.
+#[tokio::test]
+async fn test_run_workflow_not_found() {
+    let app = create_test_app().await;
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/workflows/nonexistent_workflow/run")
+                .header("content-type", "application/json")
+                .body(Body::from(json!({"topic": "test"}).to_string()))
                 .unwrap(),
         )
         .await

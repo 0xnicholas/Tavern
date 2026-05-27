@@ -114,7 +114,8 @@ async fn test_run_step_failure() {
             status: 500,
             body: "boom".to_string(),
         })
-    }).await;
+    })
+    .await;
     let wf = simple_workflow();
     let err = engine.run(&wf, json!({"input": "x"})).await.unwrap_err();
     assert!(
@@ -194,7 +195,8 @@ async fn test_run_pipeline() {
         } else {
             Ok(json!("final article"))
         }
-    }).await;
+    })
+    .await;
 
     let wf = Workflow {
         id: "pipeline".to_string(),
@@ -277,7 +279,8 @@ async fn test_run_retry_success() {
         } else {
             Ok(json!("success"))
         }
-    }).await;
+    })
+    .await;
 
     let mut wf = simple_workflow();
     wf.steps[0].retries = Some(2);
@@ -302,7 +305,8 @@ async fn test_run_retry_exhausted() {
             status: 500,
             body: "always fail".to_string(),
         })
-    }).await;
+    })
+    .await;
 
     let mut wf = simple_workflow();
     wf.steps[0].retries = Some(2);
@@ -329,7 +333,8 @@ async fn test_run_retry_with_delay() {
         } else {
             Ok(json!("ok"))
         }
-    }).await;
+    })
+    .await;
 
     let mut wf = simple_workflow();
     wf.steps[0].retries = Some(1);
@@ -785,7 +790,8 @@ async fn test_hierarchical_delegate_then_done() {
         } else {
             Ok(json!("step result"))
         }
-    }).await;
+    })
+    .await;
 
     let wf = hierarchical_workflow();
     let result = engine.run(&wf, json!({})).await.unwrap();
@@ -821,7 +827,8 @@ async fn test_hierarchical_all_steps() {
         } else {
             Ok(json!("step result"))
         }
-    }).await;
+    })
+    .await;
 
     let wf = hierarchical_workflow();
     let result = engine.run(&wf, json!({})).await.unwrap();
@@ -846,7 +853,8 @@ async fn test_hierarchical_manager_loop_exceeded() {
         } else {
             Ok(json!("step result"))
         }
-    }).await;
+    })
+    .await;
 
     let wf = hierarchical_workflow();
     let err = engine.run(&wf, json!({})).await.unwrap_err();
@@ -864,7 +872,8 @@ async fn test_hierarchical_manager_unknown_task_id() {
         } else {
             Ok(json!("step result"))
         }
-    }).await;
+    })
+    .await;
 
     let wf = hierarchical_workflow();
     let err = engine.run(&wf, json!({})).await.unwrap_err();
@@ -889,7 +898,8 @@ async fn test_hierarchical_manager_non_json_response_with_retry() {
         } else {
             Ok(json!("step result"))
         }
-    }).await;
+    })
+    .await;
 
     let wf = hierarchical_workflow();
     let result = engine.run(&wf, json!({})).await.unwrap();
@@ -928,7 +938,8 @@ async fn test_planning_injects_context_into_task() {
             // Step execution
             Ok(json!("done"))
         }
-    }).await;
+    })
+    .await;
 
     let mut wf = simple_workflow();
     wf.planning = Some(PlanningConfig {
@@ -950,7 +961,8 @@ async fn test_planning_disabled_skips_planner() {
     let engine = make_engine(move |_agent_id, _task, _context, _sp, _model| {
         cc.fetch_add(1, Ordering::SeqCst);
         Ok(json!("done"))
-    }).await;
+    })
+    .await;
 
     let mut wf = simple_workflow();
     wf.planning = Some(PlanningConfig {
@@ -970,7 +982,8 @@ async fn test_planning_error_fails_workflow() {
             status: 500,
             body: "planner failed".to_string(),
         })
-    }).await;
+    })
+    .await;
 
     let mut wf = simple_workflow();
     wf.planning = Some(PlanningConfig {
@@ -1014,7 +1027,8 @@ async fn test_signal_wait_and_resume() {
     let engine = make_engine(move |_agent_id, _task, _context, _system_prompt, _model| {
         cc.fetch_add(1, Ordering::SeqCst);
         Ok(json!("step_done"))
-    }).await;
+    })
+    .await;
 
     let mut wf = simple_workflow();
     wf.steps[0].wait_for_signal = Some("approve".to_string());

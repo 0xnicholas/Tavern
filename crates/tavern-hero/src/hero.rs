@@ -34,10 +34,7 @@ impl TavernHero {
         }
         let count = registry.len();
         drop(registry);
-        info!(
-            count = count,
-            "loaded agents from directory"
-        );
+        info!(count = count, "loaded agents from directory");
         Ok(())
     }
 
@@ -54,10 +51,7 @@ impl TavernHero {
         }
         let count = registry.len();
         drop(registry);
-        info!(
-            count = count,
-            "agents hot reloaded"
-        );
+        info!(count = count, "agents hot reloaded");
         Ok(())
     }
 

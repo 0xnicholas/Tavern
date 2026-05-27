@@ -3,7 +3,9 @@ use std::sync::atomic::AtomicU64;
 use std::sync::Arc;
 use tavern_comp::{WorkflowEvent, WorkflowRegistry};
 use tavern_hero::TavernHero;
-use tokio::sync::{mpsc, RwLock};
+use tokio::sync::{broadcast, mpsc, RwLock};
+
+pub type EventBroadcasts = Arc<RwLock<HashMap<String, broadcast::Sender<WorkflowEvent>>>>;
 
 #[derive(Clone)]
 pub struct AppState {
@@ -23,6 +25,8 @@ pub struct AppState {
     pub event_store: Arc<dyn tavern_comp::EventStore>,
     /// 活跃执行实例的信号通道，用于 signal/cancel 操作
     pub execution_handles: Arc<RwLock<HashMap<String, mpsc::Sender<WorkflowEvent>>>>,
+    /// SSE 广播注册表（用于 /executions/:id/events/stream）
+    pub event_broadcasts: EventBroadcasts,
     /// 运行时配置（用于认证中间件等）
     pub config: tavern_config::TavernConfig,
 }

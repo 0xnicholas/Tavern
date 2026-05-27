@@ -74,6 +74,13 @@ async fn main() {
         tokio::spawn(async move {
             start_workflow_watcher(watch_path, watch_registry, debounce_ms).await;
         });
+
+        // 启动 Agent 配置文件监听（自动热重载）
+        let agent_watch_path = agent_config_path.to_path_buf();
+        let watch_hero = hero.clone();
+        tokio::spawn(async move {
+            start_agent_watcher(agent_watch_path, watch_hero, debounce_ms).await;
+        });
     }
 
     // 根据配置创建 EventStore
@@ -84,8 +91,23 @@ async fn main() {
                 .expect("failed to initialize SQLite event store");
             Arc::new(store)
         }
+        #[cfg(feature = "postgres")]
+        "postgres" => {
+            let store = tavern_comp::PostgreSQLEventStore::new(&config.store.database_url)
+                .await
+                .expect("failed to initialize PostgreSQL event store");
+            Arc::new(store)
+        }
         _ => Arc::new(tavern_comp::MemoryEventStore::new()),
     };
+
+    // SSE 广播注册表 + BroadcastingEventStore 包装
+    let event_broadcasts: state::EventBroadcasts =
+        Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new()));
+    let event_store = Arc::new(tavern_server::sse::BroadcastingEventStore::with_broadcasts(
+        event_store,
+        event_broadcasts.clone(),
+    ));
 
     let app = router::create_router(Arc::new(state::AppState {
         hero,
@@ -97,6 +119,7 @@ async fn main() {
         max_concurrency: config.server.max_workflow_concurrency,
         event_store,
         execution_handles: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
+        event_broadcasts,
         config: config.clone(),
     }));
 
@@ -187,6 +210,74 @@ async fn start_workflow_watcher(
                             let mut reg = registry.write().await;
                             *reg = new_registry;
                             tracing::info!("workflows auto-reloaded from {:?}", path);
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+}
+
+/// 监听 Agent 配置目录，文件变更时自动重载。
+async fn start_agent_watcher(path: std::path::PathBuf, hero: Arc<TavernHero>, debounce_ms: u64) {
+    if !path.exists() {
+        return;
+    }
+
+    let (tx, mut rx) = tokio::sync::mpsc::channel::<Result<notify::Event, notify::Error>>(100);
+
+    let mut watcher = match notify::RecommendedWatcher::new(
+        move |res: Result<notify::Event, notify::Error>| {
+            let _ = tx.blocking_send(res);
+        },
+        notify::Config::default(),
+    ) {
+        Ok(w) => w,
+        Err(e) => {
+            tracing::error!("failed to create agent watcher: {}", e);
+            return;
+        }
+    };
+
+    if let Err(e) = watcher.watch(&path, notify::RecursiveMode::NonRecursive) {
+        tracing::error!("failed to watch agent directory: {}", e);
+        return;
+    }
+
+    loop {
+        let res = match rx.recv().await {
+            Some(r) => r,
+            None => break,
+        };
+
+        if let Ok(event) = res {
+            match event.kind {
+                notify::EventKind::Create(_)
+                | notify::EventKind::Modify(_)
+                | notify::EventKind::Remove(_) => {
+                    // Debounce
+                    loop {
+                        match tokio::time::timeout(
+                            tokio::time::Duration::from_millis(debounce_ms),
+                            rx.recv(),
+                        )
+                        .await
+                        {
+                            Ok(Some(_)) => continue,
+                            Ok(None) => break,
+                            Err(_) => break,
+                        }
+                    }
+
+                    if path.exists() {
+                        match hero.reload_from_dir(&path).await {
+                            Ok(()) => {
+                                tracing::info!("agents hot reloaded from {:?}", path);
+                            }
+                            Err(e) => {
+                                tracing::error!("agent hot reload failed: {}", e);
+                            }
                         }
                     }
                 }
@@ -494,7 +585,10 @@ mod tests {
         assert_eq!(response.status(), StatusCode::BAD_REQUEST);
     }
 
-    async fn create_test_app_with_workflow<F>(handler: F, workflow: tavern_comp::Workflow) -> axum::Router
+    async fn create_test_app_with_workflow<F>(
+        handler: F,
+        workflow: tavern_comp::Workflow,
+    ) -> axum::Router
     where
         F: Fn(&str, &str, Option<Value>, &str, &str) -> Result<Value, tavern_core::RuntimeError>
             + Send
@@ -534,6 +628,7 @@ instructions: 研究
             max_concurrency: usize::MAX,
             event_store: Arc::new(tavern_comp::MemoryEventStore::new()),
             execution_handles: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
+            event_broadcasts: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
             config: tavern_config::TavernConfig::default(),
         }))
     }
@@ -609,7 +704,8 @@ instructions: 研究
                 })
             },
             wf,
-        ).await;
+        )
+        .await;
         let response = app
             .oneshot(
                 Request::builder()
@@ -1055,6 +1151,7 @@ instructions: 研究
             max_concurrency: usize::MAX,
             event_store: Arc::new(tavern_comp::MemoryEventStore::new()),
             execution_handles: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
+            event_broadcasts: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
             config: tavern_config::TavernConfig::default(),
         }));
 
