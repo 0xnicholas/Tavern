@@ -229,15 +229,42 @@ pub struct FlowEngine<F: Flow + FlowDispatch> {
     graph: FlowGraph,
 }
 
-impl<F: Flow + FlowDispatch> FlowEngine<F> {
+impl<F: Flow + FlowDispatch + Send + 'static> FlowEngine<F> {
     pub fn new(flow: F) -> Self {
         let meta = F::metadata();
         let graph = FlowGraph::from_metadata(&meta);
         Self { flow, graph }
     }
 
-    /// 执行完整 flow（事件循环，顺序执行，支持 router）。
+    /// 异步启动 flow（非阻塞），返回 FlowHandle 用于等待结果。
+    pub fn start_async(self) -> FlowHandle {
+        let (tx, rx) = tokio::sync::oneshot::channel::<Result<serde_json::Value, FlowError>>();
+
+        tokio::spawn(async move {
+            let mut engine = self;
+            let result = engine.execute_inner(serde_json::Value::Null).await;
+            let _ = tx.send(result);
+        });
+
+        FlowHandle {
+            completion_rx: Some(rx),
+        }
+    }
+
+    /// 同步执行（内部调用 start + await）。
     pub async fn execute(
+        &mut self,
+        _inputs: serde_json::Value,
+    ) -> Result<serde_json::Value, FlowError> {
+        let starts = self.graph.start_nodes();
+        if starts.is_empty() {
+            return Err(FlowError::Other("no start methods found".to_string()));
+        }
+        self.execute_inner(serde_json::Value::Null).await
+    }
+
+    /// 内部事件循环实现。
+    async fn execute_inner(
         &mut self,
         _inputs: serde_json::Value,
     ) -> Result<serde_json::Value, FlowError> {
@@ -307,9 +334,24 @@ impl<F: Flow + FlowDispatch> FlowEngine<F> {
     }
 }
 
-/// FlowHandle — 异步执行句柄（后续实现）。
-#[allow(dead_code)]
-pub struct FlowHandle;
+/// FlowHandle — 异步执行句柄。
+pub struct FlowHandle {
+    completion_rx: Option<tokio::sync::oneshot::Receiver<Result<serde_json::Value, FlowError>>>,
+}
+
+impl FlowHandle {
+    /// 阻塞等待 flow 完成。
+    pub async fn await_completion(&mut self) -> Result<serde_json::Value, FlowError> {
+        let rx = self
+            .completion_rx
+            .take()
+            .ok_or_else(|| FlowError::Other("already awaited".to_string()))?;
+        match rx.await {
+            Ok(result) => result,
+            Err(_) => Err(FlowError::Other("flow task panicked".to_string())),
+        }
+    }
+}
 
 #[cfg(test)]
 mod tests {
@@ -731,5 +773,24 @@ mod tests {
             .expect("and flow should complete");
 
         assert!(engine.flow.state.ready, "after_both should have executed");
+    }
+
+    /// FlowHandle: 异步启动 + await_completion。
+    #[tokio::test]
+    async fn test_flow_handle_start_and_await() {
+        let pipeline = MacroPipeline {
+            state: MacroState {
+                value: String::new(),
+            },
+        };
+
+        let engine = FlowEngine::new(pipeline);
+        let mut handle = engine.start_async();
+
+        let result = handle
+            .await_completion()
+            .await
+            .expect("async flow should complete");
+        assert_eq!(result, serde_json::json!("echo: result_one"));
     }
 }
