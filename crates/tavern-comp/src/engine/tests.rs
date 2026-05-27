@@ -1302,11 +1302,8 @@ async fn test_list_by_status_finds_running_instances() {
         .unwrap();
 
     assert!(
-        !waiting.is_empty() || {
-            // MemoryEventStore uses discriminant matching, so it finds WaitingForSignal instances
-            false
-        },
-        "waiting instances should be findable"
+        !waiting.is_empty(),
+        "expected at least one WaitingForSignal instance, got none"
     );
 
     // Store still contains events for recovery

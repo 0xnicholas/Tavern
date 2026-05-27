@@ -10,6 +10,12 @@ use tracing::info;
 
 use tavern_server::{router, shutdown, state};
 
+type ExecutionHandles = Arc<
+    tokio::sync::RwLock<
+        std::collections::HashMap<String, tokio::sync::mpsc::Sender<tavern_comp::WorkflowEvent>>,
+    >,
+>;
+
 #[tokio::main]
 async fn main() {
     let config = match tavern_config::TavernConfig::load() {
@@ -109,14 +115,8 @@ async fn main() {
         event_broadcasts.clone(),
     ));
 
-    let execution_handles: Arc<
-        tokio::sync::RwLock<
-            std::collections::HashMap<
-                String,
-                tokio::sync::mpsc::Sender<tavern_comp::WorkflowEvent>,
-            >,
-        >,
-    > = Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new()));
+    let execution_handles: ExecutionHandles =
+        Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new()));
 
     let app_state = Arc::new(state::AppState {
         hero: hero.clone(),
@@ -318,14 +318,7 @@ async fn start_agent_watcher(path: std::path::PathBuf, hero: Arc<TavernHero>, de
 async fn recover_pending_instances(
     engine: &tavern_comp::WorkflowEngine,
     registry: &Arc<tokio::sync::RwLock<tavern_comp::WorkflowRegistry>>,
-    execution_handles: &Arc<
-        tokio::sync::RwLock<
-            std::collections::HashMap<
-                String,
-                tokio::sync::mpsc::Sender<tavern_comp::WorkflowEvent>,
-            >,
-        >,
-    >,
+    execution_handles: &ExecutionHandles,
     broadcasts: &state::EventBroadcasts,
     store: &dyn tavern_comp::EventStore,
 ) {
