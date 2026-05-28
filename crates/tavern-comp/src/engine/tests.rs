@@ -913,6 +913,16 @@ async fn test_hierarchical_manager_non_json_response_with_retry() {
     );
 }
 
+#[tokio::test]
+async fn test_hierarchical_manager_agent_not_registered() {
+    // Use make_engine (not make_hierarchical_engine) — only "test_agent" is registered.
+    // The hierarchical workflow references "manager" which doesn't exist.
+    let engine = make_engine(|_agent_id, _task, _context, _sp, _model| Ok(json!("ok"))).await;
+    let wf = hierarchical_workflow();
+    let err = engine.run(&wf, json!({})).await.unwrap_err();
+    assert!(matches!(err, CompError::AgentNotFound { id } if id == "manager"));
+}
+
 // ── Planning tests ──
 
 #[tokio::test]
