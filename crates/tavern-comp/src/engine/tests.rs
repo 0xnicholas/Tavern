@@ -1055,6 +1055,43 @@ async fn test_planning_error_fails_workflow() {
     assert!(matches!(err, CompError::PlanningError { .. }));
 }
 
+#[tokio::test]
+async fn test_planning_agent_omitted_falls_back_to_first_step_agent() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let call_count = AtomicUsize::new(0);
+
+    let engine = make_engine(move |agent_id, _task, _context, _sp, _model| {
+        let count = call_count.fetch_add(1, Ordering::SeqCst);
+        if count == 0 {
+            // Planning phase: called with "test_agent" (fallback from steps[0].agent_id)
+            assert_eq!(agent_id, "test_agent", "planner should use steps[0].agent_id as fallback");
+            Ok(json!({
+                "overall_strategy": "simple plan",
+                "steps": [{
+                    "task_id": "s1",
+                    "agent_id": "test_agent",
+                    "reasoning": "just do it",
+                    "expected_output": "result",
+                    "dependencies": []
+                }]
+            }))
+        } else {
+            // Step execution
+            Ok(json!("done"))
+        }
+    })
+    .await;
+
+    let mut wf = simple_workflow();
+    wf.planning = Some(PlanningConfig {
+        enabled: true,
+        planning_agent: None, // omitted — falls back to steps[0].agent_id ("test_agent")
+    });
+
+    let result = engine.run(&wf, json!({"input": "x"})).await.unwrap();
+    assert_eq!(result.context["result"], "done");
+}
+
 // ── V2 Event-Driven tests ──
 
 #[tokio::test]
