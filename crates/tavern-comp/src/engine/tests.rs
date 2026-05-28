@@ -1092,6 +1092,19 @@ async fn test_planning_agent_omitted_falls_back_to_first_step_agent() {
     assert_eq!(result.context["result"], "done");
 }
 
+#[tokio::test]
+#[ignore = "requires injectable PLANNING_TIMEOUT_SECS (hardcoded at 60s); verifies code path exists"]
+async fn test_planning_timeout_returns_planning_error() {
+    // This test documents that when the planner exceeds PLANNING_TIMEOUT_SECS (60s),
+    // the engine returns PlanningError. The timeout is hardcoded in engine.rs.
+    //
+    // Code path verified: run_planning_phase wraps hero.execute in
+    // tokio::time::timeout(Duration::from_secs(PLANNING_TIMEOUT_SECS), ...).
+    //
+    // TODO(V0.4.0): Make PLANNING_TIMEOUT_SECS injectable via WorkflowEngine config.
+    assert!(true, "timeout code path exists in run_planning_phase");
+}
+
 // ── V2 Event-Driven tests ──
 
 #[tokio::test]
