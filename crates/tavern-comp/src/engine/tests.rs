@@ -1105,6 +1105,50 @@ async fn test_planning_timeout_returns_planning_error() {
     assert!(true, "timeout code path exists in run_planning_phase");
 }
 
+#[tokio::test]
+async fn test_planning_plus_hierarchical_integration() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let call_count = AtomicUsize::new(0);
+
+    let engine = make_hierarchical_engine(move |agent_id, _task, _context, _sp, _model| {
+        let count = call_count.fetch_add(1, Ordering::SeqCst);
+        match (agent_id, count) {
+            // Call 0: Planning phase (planner = "manager" per config)
+            ("manager", 0) => Ok(json!({
+                "overall_strategy": "delegate research first",
+                "steps": [
+                    {"task_id": "s1", "agent_id": "test_agent", "reasoning": "need data", "expected_output": "report", "dependencies": []},
+                    {"task_id": "s2", "agent_id": "test_agent", "reasoning": "write after research", "expected_output": "article", "dependencies": ["s1"]}
+                ]
+            })),
+            // Subsequent calls: Manager delegation (after planning)
+            ("manager", _) => {
+                let mgr_count = count - 1; // planning was call 0
+                if mgr_count == 0 {
+                    Ok(json!({"action": "delegate", "task_id": "s1", "agent_id": "test_agent"}))
+                } else {
+                    Ok(json!({"action": "done"}))
+                }
+            }
+            _ => Ok(json!("step result"))
+        }
+    })
+    .await;
+
+    let mut wf = hierarchical_workflow();
+    wf.planning = Some(PlanningConfig {
+        enabled: true,
+        planning_agent: Some("manager".to_string()), // reuse manager as planner
+    });
+
+    let result = engine.run(&wf, json!({})).await.unwrap();
+    assert!(result.step_results.contains_key("s1"));
+    assert!(matches!(
+        result.step_results["s1"].status,
+        StepStatus::Completed
+    ));
+}
+
 // ── V2 Event-Driven tests ──
 
 #[tokio::test]

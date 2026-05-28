@@ -364,6 +364,7 @@ impl WorkflowEngine {
         manager_config: &ManagerConfig,
         completed: &[CompletedTask],
         pending_ids: &[String],
+        plan_overview: Option<&str>,
     ) -> String {
         // Agent descriptions
         let mut agent_desc = String::new();
@@ -408,16 +409,22 @@ impl WorkflowEngine {
             .as_deref()
             .unwrap_or("You are a project manager. Delegate tasks to agents.");
 
+        let plan_section = match plan_overview {
+            Some(plan) => format!("## Execution Plan\n{}\n\n", plan),
+            None => String::new(),
+        };
+
         format!(
             "{}\n\n## Output Format\n\
              You MUST respond with valid JSON only. No markdown, no explanation.\n\
              Schema: {{\"action\": \"delegate\", \"task_id\": \"<id>\", \"agent_id\": \"<id>\"}}\n\
                      or {{\"action\": \"done\"}}\n\n\
+             {}\
              ## Available Agents\n{}\n\
              ## Pending Tasks\n{}\n\
              ## Completed Tasks\n{}\n\
              Decide the next action. Output JSON only.",
-            system_instructions, agent_desc, pending_desc, completed_desc
+            system_instructions, plan_section, agent_desc, pending_desc, completed_desc
         )
     }
 
@@ -838,11 +845,32 @@ impl WorkflowEngine {
                     });
                 }
 
+                // Build plan overview from step tasks (injected by run_planning_phase)
+                let plan_overview: Option<String> = {
+                    let parts: Vec<String> = workflow
+                        .steps
+                        .iter()
+                        .filter_map(|s| {
+                            if let Some(idx) = s.task.find("[Plan Context]") {
+                                Some(s.task[idx..].to_string())
+                            } else {
+                                None
+                            }
+                        })
+                        .collect();
+                    if parts.is_empty() {
+                        None
+                    } else {
+                        Some(parts.join("\n"))
+                    }
+                };
+
                 let prompt = self.build_manager_prompt(
                     &workflow,
                     &manager_config,
                     &completed_tasks,
                     &pending_ids,
+                    plan_overview.as_deref(),
                 ).await;
 
                 let manager_result = self
