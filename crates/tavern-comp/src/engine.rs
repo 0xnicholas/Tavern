@@ -130,6 +130,11 @@ impl WorkflowEngine {
         self
     }
 
+    /// 获取内部 EventStore 的引用（用于测试/审计）。
+    pub fn store(&self) -> &Arc<dyn EventStore> {
+        &self.store
+    }
+
     /// 设置最大并发数（默认不限制）。
     pub fn with_max_concurrency(mut self, n: usize) -> Self {
         self.max_concurrency = n.max(1);

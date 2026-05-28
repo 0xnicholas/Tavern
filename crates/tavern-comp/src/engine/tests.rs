@@ -923,6 +923,56 @@ async fn test_hierarchical_manager_agent_not_registered() {
     assert!(matches!(err, CompError::AgentNotFound { id } if id == "manager"));
 }
 
+#[tokio::test]
+async fn test_hierarchical_event_stream_matches_sequential() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    let call_count = AtomicUsize::new(0);
+    let engine = make_hierarchical_engine(move |agent_id, _task, _context, _sp, _model| {
+        if agent_id == "manager" {
+            let count = call_count.fetch_add(1, Ordering::SeqCst);
+            match count {
+                0 => Ok(json!({"action": "delegate", "task_id": "s1", "agent_id": "test_agent"})),
+                _ => Ok(json!({"action": "done"})),
+            }
+        } else {
+            Ok(json!("step result"))
+        }
+    })
+    .await;
+
+    let wf = hierarchical_workflow();
+    let mut handle = engine.start(&wf, json!({})).await.unwrap();
+    let instance_id = handle.id().to_string();
+    let _result = handle.await_completion().await.unwrap();
+
+    let events = engine.store().read_stream(&instance_id).await.unwrap();
+
+    let event_types: Vec<&str> = events.iter().map(|e| match e {
+        WorkflowEvent::InstanceCreated { .. } => "InstanceCreated",
+        WorkflowEvent::InstanceStarted => "InstanceStarted",
+        WorkflowEvent::StepScheduled { .. } => "StepScheduled",
+        WorkflowEvent::StepStarted { .. } => "StepStarted",
+        WorkflowEvent::StepCompleted { .. } => "StepCompleted",
+        WorkflowEvent::StepFailed { .. } => "StepFailed",
+        WorkflowEvent::StepRetryScheduled { .. } => "StepRetryScheduled",
+        WorkflowEvent::SignalWaitStarted { .. } => "SignalWaitStarted",
+        WorkflowEvent::SignalReceived { .. } => "SignalReceived",
+        WorkflowEvent::TimerFired { .. } => "TimerFired",
+        WorkflowEvent::CancelRequested { .. } => "CancelRequested",
+        WorkflowEvent::WorkflowCompleted { .. } => "WorkflowCompleted",
+        WorkflowEvent::WorkflowFailed { .. } => "WorkflowFailed",
+        WorkflowEvent::External { .. } => "External",
+    }).collect();
+
+    assert_eq!(event_types[0], "InstanceCreated");
+    assert_eq!(event_types[1], "InstanceStarted");
+    assert!(event_types.contains(&"StepScheduled"));
+    assert!(event_types.contains(&"StepStarted"));
+    assert!(event_types.contains(&"StepCompleted"));
+    assert_eq!(event_types.last().unwrap(), &"WorkflowCompleted");
+}
+
 // ── Planning tests ──
 
 #[tokio::test]
