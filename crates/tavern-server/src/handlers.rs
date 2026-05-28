@@ -577,7 +577,7 @@ pub async fn replay_execution_handler(
     Path(id): Path<String>,
     Query(params): Query<ReplayQueryParams>,
 ) -> Result<impl IntoResponse, (StatusCode, ApiError)> {
-    let detail = match tavern_comp::replay::DetailLevel::from_str(&params.detail) {
+    let detail = match tavern_comp::replay::DetailLevel::parse(&params.detail) {
         Ok(d) => d,
         Err(e) => return Err(map_comp_error(e)),
     };

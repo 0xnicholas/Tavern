@@ -654,7 +654,7 @@ git commit -m "feat(server): add GET /executions/:id/replay handler"
 **Files:**
 - Modify: `crates/tavern-comp/src/replay.rs` (add `#[cfg(test)] mod tests`)
 
-- [ ] **Step 1: Add test module to replay.rs**
+- [x] **Step 1: Add test module to replay.rs**
 
 Append to `crates/tavern-comp/src/replay.rs`:
 
@@ -960,12 +960,12 @@ mod tests {
 }
 ```
 
-- [ ] **Step 2: Fix compilation issues**
+- [x] **Step 2: Fix compilation issues**
 
 Run: `cargo test -p tavern-comp`
 Expected: 9 new tests PASS + existing tests still PASS
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add crates/tavern-comp/src/replay.rs
@@ -987,28 +987,28 @@ git commit -m "test(replay): add 9 unit tests for ExecutionReplayer
 
 ## Task 5: Full Workspace Verification
 
-- [ ] **Step 1: Run full test suite**
+- [x] **Step 1: Run full test suite**
 
 ```bash
 cargo test --workspace
 ```
 Expected: 182 tests passed (173 existing + 9 new), 0 failed
 
-- [ ] **Step 2: Run clippy**
+- [x] **Step 2: Run clippy**
 
 ```bash
 cargo clippy --workspace
 ```
 Expected: Only existing minor warnings in tavern-flow, no new warnings
 
-- [ ] **Step 3: Run fmt check**
+- [x] **Step 3: Run fmt check**
 
 ```bash
 cargo fmt -- --check
 ```
 Expected: Zero changes
 
-- [ ] **Step 4: Commit verification lock**
+- [x] **Step 4: Commit verification lock**
 
 ```bash
 git commit --allow-empty -m "chore: verify all checks pass (test/clippy/fmt)"
@@ -1018,13 +1018,13 @@ git commit --allow-empty -m "chore: verify all checks pass (test/clippy/fmt)"
 
 ## Task 6: Final Review Checklist
 
-- [ ] `ExecutionReplayer` is in `crates/tavern-comp/src/replay.rs`
-- [ ] `pub mod replay;` added to `crates/tavern-comp/src/lib.rs`
-- [ ] `InvalidReplayRange` and `InvalidParameter` added to `CompError`
-- [ ] `GET /executions/:id/replay` route added to `router.rs`
-- [ ] `replay_execution_handler` added to `handlers.rs`
-- [ ] 9 unit tests in `replay.rs` all pass
-- [ ] `cargo test --workspace` shows 182 tests passed
-- [ ] `cargo clippy --workspace` has zero new warnings
-- [ ] `cargo fmt -- --check` is clean
-- [ ] All commits have descriptive messages
+- [x] `ExecutionReplayer` is in `crates/tavern-comp/src/replay.rs`
+- [x] `pub mod replay;` added to `crates/tavern-comp/src/lib.rs`
+- [x] `InvalidReplayRange` and `InvalidParameter` added to `CompError`
+- [x] `GET /executions/:id/replay` route added to `router.rs`
+- [x] `replay_execution_handler` added to `handlers.rs`
+- [x] 10 unit tests in `replay.rs` all pass
+- [x] `cargo test --workspace` shows 183 tests passed
+- [x] `cargo clippy --workspace` has zero new warnings (only pre-existing tavern-flow warnings)
+- [x] `cargo fmt -- --check` is clean
+- [x] All commits have descriptive messages

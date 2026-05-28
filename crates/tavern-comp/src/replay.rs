@@ -68,7 +68,7 @@ pub enum DetailLevel {
 }
 
 impl DetailLevel {
-    pub fn from_str(s: &str) -> Result<Self, CompError> {
+    pub fn parse(s: &str) -> Result<Self, CompError> {
         match s {
             "low" => Ok(DetailLevel::Low),
             "medium" => Ok(DetailLevel::Medium),
@@ -324,7 +324,7 @@ impl ExecutionReplayer {
         Ok(ExecutionReplay {
             execution_id: instance_id.to_string(),
             workflow_id: state.workflow_id.clone(),
-            started_at: started_at.unwrap_or_else(|| Utc::now()),
+            started_at: started_at.unwrap_or_else(Utc::now),
             completed_at,
             status: state.status.as_str().to_string(),
             total_events: timeline.len(),

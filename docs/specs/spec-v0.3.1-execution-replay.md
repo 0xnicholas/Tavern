@@ -1,6 +1,6 @@
 # Tavern V0.3.1: Execution Replay API
 
-> **状态**: DRAFT — 2026-05-27  
+> **状态**: COMPLETE — 2026-05-28  
 > 目标版本: V0.3.1  
 > 前置依赖: V0.3.0 (Flow 生产化已完成)
 
@@ -329,14 +329,14 @@ crates/tavern-server/src/router.rs        # + GET /executions/:id/replay
 
 ## 11. 验收标准
 
-- [ ] `cargo test --workspace` 182 全绿
-- [ ] `cargo clippy --workspace` 零新增 warning
-- [ ] `cargo fmt -- --check` 零变更
-- [ ] `GET /executions/:id/replay` 返回正确时间线（detail=medium）
-- [ ] `detail=low` 只返回用户级事件
-- [ ] `detail=high` 包含 raw_payload
-- [ ] `from/to` 时间窗口过滤正确
-- [ ] `step_id` 过滤正确
-- [ ] 不存在的 execution_id → 404
-- [ ] `from` > `to` → 400
-- [ ] 空执行返回空时间线 + summary
+- [x] `cargo test --workspace` 183 全绿
+- [x] `cargo clippy --workspace` 零新增 warning（仅 tavern-flow 已有 warning）
+- [x] `cargo fmt -- --check` 零变更
+- [x] `GET /executions/:id/replay` 返回正确时间线（detail=medium）
+- [x] `detail=low` 只返回用户级事件
+- [x] `detail=high` 包含 raw_payload
+- [x] `from/to` 时间窗口过滤正确
+- [x] `step_id` 过滤正确
+- [x] 不存在的 execution_id → 404
+- [x] `from` > `to` → 400
+- [x] 空执行返回空时间线 + summary
