@@ -948,22 +948,25 @@ async fn test_hierarchical_event_stream_matches_sequential() {
 
     let events = engine.store().read_stream(&instance_id).await.unwrap();
 
-    let event_types: Vec<&str> = events.iter().map(|e| match e {
-        WorkflowEvent::InstanceCreated { .. } => "InstanceCreated",
-        WorkflowEvent::InstanceStarted => "InstanceStarted",
-        WorkflowEvent::StepScheduled { .. } => "StepScheduled",
-        WorkflowEvent::StepStarted { .. } => "StepStarted",
-        WorkflowEvent::StepCompleted { .. } => "StepCompleted",
-        WorkflowEvent::StepFailed { .. } => "StepFailed",
-        WorkflowEvent::StepRetryScheduled { .. } => "StepRetryScheduled",
-        WorkflowEvent::SignalWaitStarted { .. } => "SignalWaitStarted",
-        WorkflowEvent::SignalReceived { .. } => "SignalReceived",
-        WorkflowEvent::TimerFired { .. } => "TimerFired",
-        WorkflowEvent::CancelRequested { .. } => "CancelRequested",
-        WorkflowEvent::WorkflowCompleted { .. } => "WorkflowCompleted",
-        WorkflowEvent::WorkflowFailed { .. } => "WorkflowFailed",
-        WorkflowEvent::External { .. } => "External",
-    }).collect();
+    let event_types: Vec<&str> = events
+        .iter()
+        .map(|e| match e {
+            WorkflowEvent::InstanceCreated { .. } => "InstanceCreated",
+            WorkflowEvent::InstanceStarted => "InstanceStarted",
+            WorkflowEvent::StepScheduled { .. } => "StepScheduled",
+            WorkflowEvent::StepStarted { .. } => "StepStarted",
+            WorkflowEvent::StepCompleted { .. } => "StepCompleted",
+            WorkflowEvent::StepFailed { .. } => "StepFailed",
+            WorkflowEvent::StepRetryScheduled { .. } => "StepRetryScheduled",
+            WorkflowEvent::SignalWaitStarted { .. } => "SignalWaitStarted",
+            WorkflowEvent::SignalReceived { .. } => "SignalReceived",
+            WorkflowEvent::TimerFired { .. } => "TimerFired",
+            WorkflowEvent::CancelRequested { .. } => "CancelRequested",
+            WorkflowEvent::WorkflowCompleted { .. } => "WorkflowCompleted",
+            WorkflowEvent::WorkflowFailed { .. } => "WorkflowFailed",
+            WorkflowEvent::External { .. } => "External",
+        })
+        .collect();
 
     assert_eq!(event_types[0], "InstanceCreated");
     assert_eq!(event_types[1], "InstanceStarted");
@@ -1064,7 +1067,10 @@ async fn test_planning_agent_omitted_falls_back_to_first_step_agent() {
         let count = call_count.fetch_add(1, Ordering::SeqCst);
         if count == 0 {
             // Planning phase: called with "test_agent" (fallback from steps[0].agent_id)
-            assert_eq!(agent_id, "test_agent", "planner should use steps[0].agent_id as fallback");
+            assert_eq!(
+                agent_id, "test_agent",
+                "planner should use steps[0].agent_id as fallback"
+            );
             Ok(json!({
                 "overall_strategy": "simple plan",
                 "steps": [{

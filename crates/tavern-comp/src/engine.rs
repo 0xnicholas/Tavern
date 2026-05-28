@@ -851,11 +851,9 @@ impl WorkflowEngine {
                         .steps
                         .iter()
                         .filter_map(|s| {
-                            if let Some(idx) = s.task.find("[Plan Context]") {
-                                Some(s.task[idx..].to_string())
-                            } else {
-                                None
-                            }
+                            s.task
+                                .find("[Plan Context]")
+                                .map(|idx| s.task[idx..].to_string())
                         })
                         .collect();
                     if parts.is_empty() {
