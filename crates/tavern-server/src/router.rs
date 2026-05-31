@@ -66,6 +66,10 @@ pub fn create_router(state: Arc<AppState>) -> Router {
             post(handlers::clone_execution_handler),
         );
 
+    // V0.3.6: 调度端点
+    protected_routes =
+        protected_routes.route("/schedules", get(handlers::list_schedules_handler));
+
     // V0.3.3: 断点端点
     protected_routes = protected_routes
         .route("/breakpoints", get(handlers::list_breakpoints_handler));

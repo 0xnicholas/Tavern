@@ -1336,6 +1336,15 @@ async fn send_approval_signal(
     Ok(StatusCode::ACCEPTED)
 }
 
+// ── V0.3.6: 定时调度 handler ──
+
+pub async fn list_schedules_handler(
+    State(state): State<Arc<AppState>>,
+) -> impl IntoResponse {
+    let schedules = state.scheduler.list().await;
+    Json(serde_json::json!({ "schedules": schedules }))
+}
+
 // ── Flow handlers ──
 
 #[derive(Serialize)]

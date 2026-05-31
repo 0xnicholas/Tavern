@@ -5,3 +5,4 @@ pub mod router;
 pub mod shutdown;
 pub mod sse;
 pub mod state;
+pub mod scheduler;

@@ -72,6 +72,8 @@ fn simple_workflow() -> Workflow {
         process: Process::Sequential,
         planning: None,
             webhook: None,
+            schedule: None,
+            schedule_inputs: serde_json::Value::Null,
     }
 }
 
@@ -264,6 +266,8 @@ async fn test_run_pipeline() {
         process: Process::Sequential,
         planning: None,
             webhook: None,
+            schedule: None,
+            schedule_inputs: serde_json::Value::Null,
     };
 
     let result = engine.run(&wf, json!({"topic": "AI"})).await.unwrap();
@@ -455,6 +459,8 @@ instructions: test
         process: Process::Sequential,
         planning: None,
             webhook: None,
+            schedule: None,
+            schedule_inputs: serde_json::Value::Null,
     };
 
     let start = Instant::now();
@@ -580,6 +586,8 @@ instructions: test
         process: Process::Sequential,
         planning: None,
             webhook: None,
+            schedule: None,
+            schedule_inputs: serde_json::Value::Null,
     };
 
     let start = Instant::now();
@@ -697,6 +705,8 @@ instructions: test
         process: Process::Sequential,
         planning: None,
             webhook: None,
+            schedule: None,
+            schedule_inputs: serde_json::Value::Null,
     };
 
     let start = Instant::now();
@@ -803,6 +813,8 @@ fn hierarchical_workflow() -> Workflow {
         }),
         planning: None,
             webhook: None,
+            schedule: None,
+            schedule_inputs: serde_json::Value::Null,
     }
 }
 
@@ -1357,6 +1369,8 @@ fn signal_workflow() -> Workflow {
         process: Process::Sequential,
         planning: None,
             webhook: None,
+            schedule: None,
+            schedule_inputs: serde_json::Value::Null,
         inputs: vec![],
         outputs: vec![],
         steps: vec![Step {

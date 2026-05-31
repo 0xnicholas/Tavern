@@ -8,7 +8,7 @@ use tavern_core::Runtime;
 use tavern_hero::TavernHero;
 use tracing::info;
 
-use tavern_server::{ratelimit::RateLimiter, router, shutdown, state};
+use tavern_server::{ratelimit::RateLimiter, router, scheduler::Scheduler, shutdown, state};
 
 type ExecutionHandles = Arc<
     tokio::sync::RwLock<
@@ -118,6 +118,15 @@ async fn main() {
     let execution_handles: ExecutionHandles =
         Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new()));
 
+    // V0.3.6: 启动 Cron 调度器
+    let scheduler = Arc::new(Scheduler::new(
+        hero.clone(),
+        event_store.clone(),
+        registry.clone(),
+    ));
+    let scheduler_clone = scheduler.clone();
+    tokio::spawn(async move { scheduler_clone.run().await });
+
     let app_state = Arc::new(state::AppState {
         hero: hero.clone(),
         registry: registry.clone(),
@@ -137,6 +146,7 @@ async fn main() {
             config.rate_limit.default_rps,
             config.rate_limit.per_tenant.iter().map(|(k, v)| (k.clone(), v.rps)).collect(),
         ),
+        scheduler: scheduler.clone(),
         config: config.clone(),
     });
 
@@ -453,6 +463,7 @@ mod tests {
     use tavern_core::Runtime;
     use tavern_hero::TavernHero;
     use tavern_server::ratelimit::RateLimiter;
+    use tavern_server::scheduler::Scheduler;
 
     use tavern_server::router;
     use tavern_server::state::AppState;
@@ -521,6 +532,8 @@ mod tests {
             process: tavern_comp::Process::Sequential,
             planning: None,
             webhook: None,
+            schedule: None,
+            schedule_inputs: serde_json::Value::Null,
         }
     }
 
@@ -776,6 +789,9 @@ instructions: 研究
         registry.register(workflow).unwrap();
         let registry = Arc::new(tokio::sync::RwLock::new(registry));
 
+        let hero_for_scheduler = hero.clone();
+        let registry_for_scheduler = registry.clone();
+
         router::create_router(Arc::new(AppState {
             hero,
             registry,
@@ -791,6 +807,7 @@ instructions: 研究
             flow_registry: Arc::new(tavern_flow::FlowRegistry::new()),
             flow_handles: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
             rate_limiter: RateLimiter::new(false, 10, std::collections::HashMap::new()),
+            scheduler: Arc::new(Scheduler::new(hero_for_scheduler, Arc::new(tavern_comp::MemoryEventStore::new()), registry_for_scheduler)),
             config: tavern_config::TavernConfig::default(),
         }))
     }
@@ -821,6 +838,8 @@ instructions: 研究
             process: tavern_comp::Process::Sequential,
             planning: None,
             webhook: None,
+            schedule: None,
+            schedule_inputs: serde_json::Value::Null,
         };
         let app = create_test_app_with_workflow(|_, _, _, _, _| Ok(json!("ok")), wf).await;
         let response = app
@@ -863,6 +882,8 @@ instructions: 研究
             process: tavern_comp::Process::Sequential,
             planning: None,
             webhook: None,
+            schedule: None,
+            schedule_inputs: serde_json::Value::Null,
         };
         let app = create_test_app_with_workflow(
             |_, _, _, _, _| {
@@ -1176,6 +1197,8 @@ instructions: 研究
             process: tavern_comp::Process::Sequential,
             planning: None,
             webhook: None,
+            schedule: None,
+            schedule_inputs: serde_json::Value::Null,
         };
         let app = create_test_app_with_workflow(|_, _, _, _, _| Ok(json!("done")), wf).await;
 
@@ -1312,6 +1335,9 @@ instructions: 研究
         registry.register(default_workflow()).unwrap();
         let registry = Arc::new(tokio::sync::RwLock::new(registry));
 
+        let hero_for_scheduler = hero.clone();
+        let registry_for_scheduler = registry.clone();
+
         let app = router::create_router(Arc::new(AppState {
             hero,
             registry,
@@ -1327,6 +1353,7 @@ instructions: 研究
             flow_registry: Arc::new(tavern_flow::FlowRegistry::new()),
             flow_handles: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
             rate_limiter: RateLimiter::new(false, 10, std::collections::HashMap::new()),
+            scheduler: Arc::new(Scheduler::new(hero_for_scheduler, Arc::new(tavern_comp::MemoryEventStore::new()), registry_for_scheduler)),
             config: tavern_config::TavernConfig::default(),
         }));
 

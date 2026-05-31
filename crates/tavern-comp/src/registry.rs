@@ -122,6 +122,8 @@ mod tests {
             process: Process::Sequential,
             planning: None,
             webhook: None,
+            schedule: None,
+            schedule_inputs: serde_json::Value::Null,
         }
     }
 

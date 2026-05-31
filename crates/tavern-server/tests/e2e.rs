@@ -11,7 +11,7 @@ use tower::ServiceExt;
 use tavern_adapters::MockRuntime;
 use tavern_core::Runtime;
 use tavern_hero::TavernHero;
-use tavern_server::{router, state::AppState};
+use tavern_server::{router, scheduler::Scheduler, state::AppState};
 
 fn default_workflow() -> tavern_comp::Workflow {
     tavern_comp::Workflow {
@@ -77,6 +77,8 @@ fn default_workflow() -> tavern_comp::Workflow {
         process: tavern_comp::Process::Sequential,
         planning: None,
             webhook: None,
+            schedule: None,
+            schedule_inputs: serde_json::Value::Null,
     }
 }
 
@@ -137,6 +139,9 @@ instructions: 编辑
     registry.register(workflow).unwrap();
     let registry = Arc::new(tokio::sync::RwLock::new(registry));
 
+    let hero_for_scheduler = hero.clone();
+    let registry_for_scheduler = registry.clone();
+
     router::create_router(Arc::new(AppState {
         hero,
         registry,
@@ -151,6 +156,7 @@ instructions: 编辑
         event_broadcasts: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
         flow_registry: Arc::new(tavern_flow::FlowRegistry::new()),
         flow_handles: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
+        scheduler: Arc::new(Scheduler::new(hero_for_scheduler, Arc::new(tavern_comp::MemoryEventStore::new()), registry_for_scheduler)),
         rate_limiter: tavern_server::ratelimit::RateLimiter::new(false, 10, std::collections::HashMap::new()),
         config: tavern_config::TavernConfig::default(),
     }))
@@ -424,6 +430,8 @@ async fn test_end_to_end_signal_workflow() {
         process: tavern_comp::Process::Sequential,
         planning: None,
             webhook: None,
+            schedule: None,
+            schedule_inputs: serde_json::Value::Null,
     };
 
     let app = create_test_app_with_workflow(
@@ -646,6 +654,9 @@ instructions: 编辑
     config.auth.auth_type = auth_type.to_string();
     config.auth.keys = keys.iter().map(|k| k.to_string()).collect();
 
+    let hero_for_scheduler = hero.clone();
+    let registry_for_scheduler = registry.clone();
+
     router::create_router(Arc::new(AppState {
         hero,
         registry,
@@ -660,6 +671,7 @@ instructions: 编辑
         event_broadcasts: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
         flow_registry: Arc::new(tavern_flow::FlowRegistry::new()),
         flow_handles: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
+        scheduler: Arc::new(Scheduler::new(hero_for_scheduler, Arc::new(tavern_comp::MemoryEventStore::new()), registry_for_scheduler)),
         rate_limiter: tavern_server::ratelimit::RateLimiter::new(false, 10, std::collections::HashMap::new()),
         config,
     }))

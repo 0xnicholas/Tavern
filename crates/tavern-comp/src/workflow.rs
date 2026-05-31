@@ -67,6 +67,12 @@ pub struct Workflow {
 
     /// V0.3.5: Webhook 回调配置
     pub webhook: Option<WebhookConfig>,
+
+    /// V0.3.6: Cron 定时调度表达式
+    pub schedule: Option<String>,
+
+    /// V0.3.6: 定时触发时传入的默认 inputs
+    pub schedule_inputs: Value,
 }
 
 impl Serialize for Workflow {
@@ -93,6 +99,8 @@ impl Serialize for Workflow {
         }
         state.serialize_field("planning", &self.planning)?;
         state.serialize_field("webhook", &self.webhook)?;
+        state.serialize_field("schedule", &self.schedule)?;
+        state.serialize_field("schedule_inputs", &self.schedule_inputs)?;
         state.end()
     }
 }
@@ -121,6 +129,10 @@ impl<'de> Deserialize<'de> for Workflow {
             planning: Option<PlanningConfig>,
             #[serde(default)]
             webhook: Option<WebhookConfig>,
+            #[serde(default)]
+            schedule: Option<String>,
+            #[serde(default)]
+            schedule_inputs: Value,
         }
 
         let h = Helper::deserialize(deserializer)?;
@@ -152,6 +164,8 @@ impl<'de> Deserialize<'de> for Workflow {
             process,
             planning: h.planning,
             webhook: h.webhook,
+            schedule: h.schedule,
+            schedule_inputs: h.schedule_inputs,
         })
     }
 }

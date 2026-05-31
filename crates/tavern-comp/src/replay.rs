@@ -461,6 +461,8 @@ mod tests {
             process: crate::workflow::Process::Sequential,
             planning: None,
             webhook: None,
+            schedule: None,
+            schedule_inputs: serde_json::Value::Null,
             steps: vec![
                 Step {
                     id: "research".to_string(),

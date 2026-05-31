@@ -7,6 +7,7 @@ use tavern_hero::TavernHero;
 use tokio::sync::{broadcast, mpsc, RwLock};
 
 use crate::ratelimit::RateLimiter;
+use crate::scheduler::Scheduler;
 
 pub type EventBroadcasts = Arc<RwLock<HashMap<String, broadcast::Sender<WorkflowEvent>>>>;
 
@@ -36,6 +37,8 @@ pub struct AppState {
     pub flow_registry: Arc<tavern_flow::FlowRegistry>,
     /// 活跃 Flow 实例（用于 status/cancel）
     pub flow_handles: Arc<RwLock<HashMap<String, FlowHandleRef>>>,
+    /// V0.3.6: Cron 定时调度器
+    pub scheduler: Arc<Scheduler>,
     /// V0.3.2: 租户限流器
     pub rate_limiter: RateLimiter,
     /// 运行时配置（用于认证中间件等）
