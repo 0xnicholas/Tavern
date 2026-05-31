@@ -457,9 +457,24 @@ pub async fn run_workflow_batch_handler(
         join_set.spawn(async move {
             let _permit = permit;
             let start = Instant::now();
-            let result = engine.run(&workflow, inputs).await;
+            // Use start() + await_completion() to capture execution_id for both success/failure
+            let exec_result = {
+                let start_handle = engine.start(&workflow, inputs).await;
+                match start_handle {
+                    Ok(mut handle) => {
+                        let id = handle.id().to_string();
+                        let id_for_err = id.clone();
+                        handle
+                            .await_completion()
+                            .await
+                            .map(|r| (id, r))
+                            .map_err(|e| (id_for_err, e))
+                    }
+                    Err(e) => Err((String::new(), e)),
+                }
+            };
             let duration_ms = start.elapsed().as_millis() as u64;
-            (i, inputs_for_result, result, duration_ms)
+            (i, inputs_for_result, exec_result, duration_ms)
         });
     }
 
@@ -469,19 +484,15 @@ pub async fn run_workflow_batch_handler(
     let mut failed = 0usize;
     let mut total_duration_ms = 0u64;
 
-    while let Some(Ok((i, inputs, result, duration_ms))) = join_set.join_next().await {
+    while let Some(Ok((i, inputs, exec_result, duration_ms))) = join_set.join_next().await {
         total_duration_ms += duration_ms;
-        match result {
-            Ok(r) => {
+        record_duration_bucket(&state.workflow_duration_buckets, duration_ms);
+        match exec_result {
+            Ok((exec_id, r)) => {
                 succeeded += 1;
                 items.push(BatchResultItem {
                     index: i,
-                    execution_id: r
-                        .step_results
-                        .keys()
-                        .next()
-                        .cloned()
-                        .unwrap_or_default(),
+                    execution_id: exec_id,
                     status: "completed".to_string(),
                     inputs,
                     outputs: Some(r.outputs),
@@ -489,11 +500,11 @@ pub async fn run_workflow_batch_handler(
                     duration_ms,
                 });
             }
-            Err(e) => {
+            Err((exec_id, e)) => {
                 failed += 1;
                 items.push(BatchResultItem {
                     index: i,
-                    execution_id: String::new(),
+                    execution_id: exec_id,
                     status: "failed".to_string(),
                     inputs,
                     outputs: None,
