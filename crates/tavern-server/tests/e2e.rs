@@ -32,6 +32,7 @@ fn default_workflow() -> tavern_comp::Workflow {
                 signal_timeout: None,
                 expected_output: None,
             signal_timeout_action: None,
+            breakpoint: false,
             },
             tavern_comp::Step {
                 id: "write".to_string(),
@@ -46,6 +47,7 @@ fn default_workflow() -> tavern_comp::Workflow {
                 signal_timeout: None,
                 expected_output: None,
             signal_timeout_action: None,
+            breakpoint: false,
             },
             tavern_comp::Step {
                 id: "edit".to_string(),
@@ -60,6 +62,7 @@ fn default_workflow() -> tavern_comp::Workflow {
                 signal_timeout: None,
                 expected_output: None,
             signal_timeout_action: None,
+            breakpoint: false,
             },
         ],
         inputs: vec![tavern_comp::InputDef {
@@ -410,6 +413,7 @@ async fn test_end_to_end_signal_workflow() {
             signal_timeout: None,
             expected_output: None,
             signal_timeout_action: None,
+            breakpoint: false,
         }],
         inputs: vec![],
         outputs: vec![tavern_comp::OutputDef {

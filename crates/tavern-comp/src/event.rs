@@ -53,6 +53,12 @@ pub enum WorkflowEvent {
         step_id: String,
         signal_name: String,
     },
+    /// V0.3.3: 断点命中，执行暂停等待外部恢复。
+    BreakpointHit {
+        step_id: String,
+        reason: String,
+        paused_at: DateTime<Utc>,
+    },
     SignalReceived {
         signal_name: String,
         payload: Value,

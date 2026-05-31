@@ -559,6 +559,18 @@ impl WorkflowEngine {
                                 .find(|s| s.id == step_id)
                                 .ok_or(CompError::StepNotFound { id: step_id.clone() })?;
 
+                            // V0.3.3: 断点调试——步骤执行前暂停
+                            if step.breakpoint {
+                                let bp_event = WorkflowEvent::BreakpointHit {
+                                    step_id: step_id.clone(),
+                                    reason: format!("breakpoint at step '{}'", step_id),
+                                    paused_at: Utc::now(),
+                                };
+                                self.apply_and_persist(&instance_id, bp_event, &mut state)
+                                    .await?;
+                                continue;
+                            }
+
                             let attempt = self.get_attempt(&state, &step_id);
                             let max_retries = step.retries.unwrap_or(0);
                             let will_retry = attempt <= max_retries;

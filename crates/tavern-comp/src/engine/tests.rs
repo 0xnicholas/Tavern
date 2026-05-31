@@ -58,6 +58,7 @@ fn simple_workflow() -> Workflow {
             signal_timeout: None,
             expected_output: None,
             signal_timeout_action: None,
+            breakpoint: false,
         }],
         inputs: vec![InputDef {
             name: "input".to_string(),
@@ -217,6 +218,7 @@ async fn test_run_pipeline() {
                 signal_timeout: None,
                 expected_output: None,
             signal_timeout_action: None,
+            breakpoint: false,
             },
             Step {
                 id: "write".to_string(),
@@ -231,6 +233,7 @@ async fn test_run_pipeline() {
                 signal_timeout: None,
                 expected_output: None,
             signal_timeout_action: None,
+            breakpoint: false,
             },
             Step {
                 id: "edit".to_string(),
@@ -245,6 +248,7 @@ async fn test_run_pipeline() {
                 signal_timeout: None,
                 expected_output: None,
             signal_timeout_action: None,
+            breakpoint: false,
             },
         ],
         inputs: vec![InputDef {
@@ -426,6 +430,7 @@ instructions: test
                 signal_timeout: None,
                 expected_output: None,
             signal_timeout_action: None,
+            breakpoint: false,
             },
             Step {
                 id: "b".to_string(),
@@ -440,6 +445,7 @@ instructions: test
                 signal_timeout: None,
                 expected_output: None,
             signal_timeout_action: None,
+            breakpoint: false,
             },
         ],
         inputs: vec![],
@@ -533,6 +539,7 @@ instructions: test
                 signal_timeout: None,
                 expected_output: None,
             signal_timeout_action: None,
+            breakpoint: false,
             },
             Step {
                 id: "b".to_string(),
@@ -547,6 +554,7 @@ instructions: test
                 signal_timeout: None,
                 expected_output: None,
             signal_timeout_action: None,
+            breakpoint: false,
             },
             Step {
                 id: "c".to_string(),
@@ -561,6 +569,7 @@ instructions: test
                 signal_timeout: None,
                 expected_output: None,
             signal_timeout_action: None,
+            breakpoint: false,
             },
         ],
         inputs: vec![],
@@ -661,6 +670,7 @@ instructions: test
                 signal_timeout: None,
                 expected_output: None,
             signal_timeout_action: None,
+            breakpoint: false,
             },
             Step {
                 id: "fast".to_string(),
@@ -675,6 +685,7 @@ instructions: test
                 signal_timeout: None,
                 expected_output: None,
             signal_timeout_action: None,
+            breakpoint: false,
             },
         ],
         inputs: vec![],
@@ -761,6 +772,7 @@ fn hierarchical_workflow() -> Workflow {
                 signal_timeout: None,
                 expected_output: None,
             signal_timeout_action: None,
+            breakpoint: false,
             },
             Step {
                 id: "s2".to_string(),
@@ -775,6 +787,7 @@ fn hierarchical_workflow() -> Workflow {
                 signal_timeout: None,
                 expected_output: None,
             signal_timeout_action: None,
+            breakpoint: false,
             },
         ],
         inputs: vec![],
@@ -977,6 +990,7 @@ async fn test_hierarchical_event_stream_matches_sequential() {
             WorkflowEvent::CancelRequested { .. } => "CancelRequested",
             WorkflowEvent::WorkflowCompleted { .. } => "WorkflowCompleted",
             WorkflowEvent::WorkflowFailed { .. } => "WorkflowFailed",
+            WorkflowEvent::BreakpointHit { .. } => "BreakpointHit",
             WorkflowEvent::External { .. } => "External",
         })
         .collect();
@@ -1351,6 +1365,7 @@ fn signal_workflow() -> Workflow {
             signal_timeout: None,
             expected_output: None,
             signal_timeout_action: None,
+            breakpoint: false,
         }],
     }
 }

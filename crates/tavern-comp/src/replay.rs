@@ -101,6 +101,7 @@ impl DetailLevel {
                     | WorkflowEvent::StepFailed { .. }
                     | WorkflowEvent::SignalReceived { .. }
                     | WorkflowEvent::SignalWaitStarted { .. }
+                    | WorkflowEvent::BreakpointHit { .. }
                     | WorkflowEvent::CancelRequested { .. }
                     | WorkflowEvent::StepRetryScheduled { .. }
                     | WorkflowEvent::WorkflowCompleted { .. }
@@ -150,6 +151,7 @@ pub fn event_timestamp(event: &WorkflowEvent) -> DateTime<Utc> {
         WorkflowEvent::StepFailed { .. } => Utc::now(),
         WorkflowEvent::StepRetryScheduled { scheduled_at, .. } => *scheduled_at,
         WorkflowEvent::SignalWaitStarted { .. } => Utc::now(),
+        WorkflowEvent::BreakpointHit { paused_at, .. } => *paused_at,
         WorkflowEvent::SignalReceived { received_at, .. } => *received_at,
         WorkflowEvent::TimerFired { .. } => Utc::now(),
         WorkflowEvent::CancelRequested { requested_at } => *requested_at,
@@ -346,6 +348,7 @@ fn event_type_name(event: &WorkflowEvent) -> String {
         WorkflowEvent::StepFailed { .. } => "StepFailed",
         WorkflowEvent::StepRetryScheduled { .. } => "StepRetryScheduled",
         WorkflowEvent::SignalWaitStarted { .. } => "SignalWaitStarted",
+        WorkflowEvent::BreakpointHit { .. } => "BreakpointHit",
         WorkflowEvent::SignalReceived { .. } => "SignalReceived",
         WorkflowEvent::TimerFired { .. } => "TimerFired",
         WorkflowEvent::CancelRequested { .. } => "CancelRequested",
@@ -471,6 +474,7 @@ mod tests {
                     signal_timeout: None,
                     expected_output: None,
             signal_timeout_action: None,
+            breakpoint: false,
                 },
                 Step {
                     id: "write".to_string(),
@@ -485,6 +489,7 @@ mod tests {
                     signal_timeout: None,
                     expected_output: None,
             signal_timeout_action: None,
+            breakpoint: false,
                 },
             ],
             inputs: vec![],

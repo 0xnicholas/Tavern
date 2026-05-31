@@ -115,6 +115,7 @@ mod tests {
                 signal_timeout: None,
                 expected_output: None,
             signal_timeout_action: None,
+            breakpoint: false,
             }],
             inputs: vec![],
             outputs: vec![],

@@ -476,6 +476,7 @@ mod tests {
                     signal_timeout: None,
                     expected_output: None,
             signal_timeout_action: None,
+            breakpoint: false,
                 },
                 tavern_comp::Step {
                     id: "write".to_string(),
@@ -490,6 +491,7 @@ mod tests {
                     signal_timeout: None,
                     expected_output: None,
             signal_timeout_action: None,
+            breakpoint: false,
                 },
                 tavern_comp::Step {
                     id: "edit".to_string(),
@@ -504,6 +506,7 @@ mod tests {
                     signal_timeout: None,
                     expected_output: None,
             signal_timeout_action: None,
+            breakpoint: false,
                 },
             ],
             inputs: vec![tavern_comp::InputDef {
@@ -810,6 +813,7 @@ instructions: 研究
                 signal_timeout: None,
                 expected_output: None,
             signal_timeout_action: None,
+            breakpoint: false,
             }],
             inputs: vec![],
             outputs: vec![],
@@ -850,6 +854,7 @@ instructions: 研究
                 signal_timeout: None,
                 expected_output: None,
             signal_timeout_action: None,
+            breakpoint: false,
             }],
             inputs: vec![],
             outputs: vec![],
@@ -1161,6 +1166,7 @@ instructions: 研究
                 signal_timeout: None,
                 expected_output: None,
             signal_timeout_action: None,
+            breakpoint: false,
             }],
             inputs: vec![],
             outputs: vec![],

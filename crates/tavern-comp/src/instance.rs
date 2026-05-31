@@ -138,6 +138,13 @@ impl InstanceState {
                     signal: signal_name.clone(),
                 };
             }
+            WorkflowEvent::BreakpointHit { step_id, .. } => {
+                self.scheduled_steps.remove(step_id);
+                self.signal_blocked_steps.insert(step_id.clone());
+                self.status = InstanceStatus::WaitingForSignal {
+                    signal: format!("__breakpoint__{}", step_id),
+                };
+            }
             WorkflowEvent::StepFailed {
                 step_id,
                 error,

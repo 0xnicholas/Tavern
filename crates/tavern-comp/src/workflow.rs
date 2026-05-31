@@ -367,6 +367,10 @@ pub struct Step {
     #[serde(default)]
     pub signal_timeout_action: Option<SignalTimeoutAction>,
 
+    /// V0.3.3: 是否在步骤执行前暂停（断点调试）。
+    #[serde(default)]
+    pub breakpoint: bool,
+
     /// 可选的预期输出描述，帮助 LLM 理解任务目标。
     /// 在 Manager prompt 和 Planning Context 注入时使用。
     #[serde(default)]

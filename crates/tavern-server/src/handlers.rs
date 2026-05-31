@@ -787,6 +787,60 @@ pub async fn refresh_token_handler(
     }))
 }
 
+// ── V0.3.3: 断点 handlers ──
+
+#[derive(Serialize)]
+pub struct BreakpointItem {
+    pub execution_id: String,
+    pub step_id: String,
+    pub reason: String,
+    pub paused_at: Option<String>,
+}
+
+#[derive(Serialize)]
+pub struct BreakpointListResponse {
+    pub breakpoints: Vec<BreakpointItem>,
+}
+
+pub async fn list_breakpoints_handler(
+    State(state): State<Arc<AppState>>,
+) -> Result<impl IntoResponse, (StatusCode, ApiError)> {
+    let statuses = state
+        .event_store
+        .list_by_status(tavern_comp::InstanceStatus::WaitingForSignal {
+            signal: String::new(),
+        })
+        .await
+        .map_err(|e| map_comp_error(e))?;
+
+    let mut breakpoints = Vec::new();
+    for instance_id in statuses {
+        let events = state
+            .event_store
+            .read_stream(&instance_id)
+            .await
+            .map_err(|e| map_comp_error(e))?;
+
+        for event in &events {
+            if let tavern_comp::WorkflowEvent::BreakpointHit {
+                step_id,
+                reason,
+                paused_at,
+            } = event
+            {
+                breakpoints.push(BreakpointItem {
+                    execution_id: instance_id.clone(),
+                    step_id: step_id.clone(),
+                    reason: reason.clone(),
+                    paused_at: Some(paused_at.to_rfc3339()),
+                });
+            }
+        }
+    }
+
+    Ok(Json(BreakpointListResponse { breakpoints }))
+}
+
 // ── V0.3.2: 克隆 handler ──
 
 #[derive(Serialize)]
