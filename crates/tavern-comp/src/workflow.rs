@@ -17,6 +17,20 @@ pub enum SignalTimeoutAction {
     Reject,
 }
 
+/// V0.3.5: Webhook 回调配置。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WebhookConfig {
+    pub url: String,
+    #[serde(default)]
+    pub secret: Option<String>,
+    #[serde(default)]
+    pub timeout_secs: Option<u64>,
+    #[serde(default)]
+    pub retries: Option<u64>,
+    #[serde(default)]
+    pub retry_delay: Option<u64>,
+}
+
 /// 工作流的完整配置定义。
 ///
 /// 自定义反序列化以支持 `process: hierarchical` + `manager:` YAML 双 key 语法。
@@ -50,6 +64,9 @@ pub struct Workflow {
     /// Planning 配置
     /// YAML 缺失时默认 None（不启用 Planning）
     pub planning: Option<PlanningConfig>,
+
+    /// V0.3.5: Webhook 回调配置
+    pub webhook: Option<WebhookConfig>,
 }
 
 impl Serialize for Workflow {
@@ -75,6 +92,7 @@ impl Serialize for Workflow {
             }
         }
         state.serialize_field("planning", &self.planning)?;
+        state.serialize_field("webhook", &self.webhook)?;
         state.end()
     }
 }
@@ -101,6 +119,8 @@ impl<'de> Deserialize<'de> for Workflow {
             manager: Option<ManagerConfig>,
             #[serde(default)]
             planning: Option<PlanningConfig>,
+            #[serde(default)]
+            webhook: Option<WebhookConfig>,
         }
 
         let h = Helper::deserialize(deserializer)?;
@@ -131,6 +151,7 @@ impl<'de> Deserialize<'de> for Workflow {
             outputs: h.outputs,
             process,
             planning: h.planning,
+            webhook: h.webhook,
         })
     }
 }

@@ -520,6 +520,7 @@ mod tests {
             }],
             process: tavern_comp::Process::Sequential,
             planning: None,
+            webhook: None,
         }
     }
 
@@ -819,6 +820,7 @@ instructions: 研究
             outputs: vec![],
             process: tavern_comp::Process::Sequential,
             planning: None,
+            webhook: None,
         };
         let app = create_test_app_with_workflow(|_, _, _, _, _| Ok(json!("ok")), wf).await;
         let response = app
@@ -860,6 +862,7 @@ instructions: 研究
             outputs: vec![],
             process: tavern_comp::Process::Sequential,
             planning: None,
+            webhook: None,
         };
         let app = create_test_app_with_workflow(
             |_, _, _, _, _| {
@@ -1172,6 +1175,7 @@ instructions: 研究
             outputs: vec![],
             process: tavern_comp::Process::Sequential,
             planning: None,
+            webhook: None,
         };
         let app = create_test_app_with_workflow(|_, _, _, _, _| Ok(json!("done")), wf).await;
 

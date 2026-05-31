@@ -460,6 +460,7 @@ mod tests {
             description: None,
             process: crate::workflow::Process::Sequential,
             planning: None,
+            webhook: None,
             steps: vec![
                 Step {
                     id: "research".to_string(),

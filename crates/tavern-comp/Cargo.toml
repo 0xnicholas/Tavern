@@ -20,6 +20,9 @@ futures-util = "0.3"
 uuid = { version = "1", features = ["v4"] }
 async-trait = "0.1"
 sqlx = { version = "0.8", features = ["runtime-tokio", "postgres", "migrate", "json"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+hmac = "0.12"
+sha2 = "0.10"
 
 [features]
 default = ["sqlite"]
@@ -29,3 +32,4 @@ postgres = ["sqlx/postgres"]
 [dev-dependencies]
 tempfile = "3"
 tavern-adapters = { path = "../tavern-adapters" }
+wiremock = "0.6"

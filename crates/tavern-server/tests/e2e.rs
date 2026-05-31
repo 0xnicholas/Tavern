@@ -76,6 +76,7 @@ fn default_workflow() -> tavern_comp::Workflow {
         }],
         process: tavern_comp::Process::Sequential,
         planning: None,
+            webhook: None,
     }
 }
 
@@ -422,6 +423,7 @@ async fn test_end_to_end_signal_workflow() {
         }],
         process: tavern_comp::Process::Sequential,
         planning: None,
+            webhook: None,
     };
 
     let app = create_test_app_with_workflow(

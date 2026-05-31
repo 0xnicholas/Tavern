@@ -126,6 +126,7 @@ mod tests {
             outputs: vec![],
             process: Process::Sequential,
             planning: None,
+            webhook: None,
         };
         let order = validate_dag(&workflow).unwrap();
         assert_eq!(order, vec!["a", "b", "c"]);
@@ -147,6 +148,7 @@ mod tests {
             outputs: vec![],
             process: Process::Sequential,
             planning: None,
+            webhook: None,
         };
         let order = validate_dag(&workflow).unwrap();
         assert_eq!(order[0], "a");
@@ -168,6 +170,7 @@ mod tests {
             outputs: vec![],
             process: Process::Sequential,
             planning: None,
+            webhook: None,
         };
         let err = validate_dag(&workflow).unwrap_err();
         assert!(matches!(err, CompError::CyclicDependency));
@@ -184,6 +187,7 @@ mod tests {
             outputs: vec![],
             process: Process::Sequential,
             planning: None,
+            webhook: None,
         };
         let err = validate_dag(&workflow).unwrap_err();
         assert!(matches!(err, CompError::StepNotFound { id } if id == "x"));
@@ -209,6 +213,7 @@ mod tests {
                 instructions: None,
             }),
             planning: None,
+            webhook: None,
         };
         // This workflow has a cycle (a -> c -> b -> a), but hierarchical mode skips DAG
         assert!(workflow.validate_static().is_ok());
@@ -228,6 +233,7 @@ mod tests {
                 instructions: None,
             }),
             planning: None,
+            webhook: None,
         };
         let err = workflow.validate_static().unwrap_err();
         assert!(matches!(err, CompError::ConfigParse { .. }));

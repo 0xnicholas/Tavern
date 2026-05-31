@@ -121,6 +121,7 @@ mod tests {
             outputs: vec![],
             process: Process::Sequential,
             planning: None,
+            webhook: None,
         }
     }
 

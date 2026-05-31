@@ -693,6 +693,42 @@ impl WorkflowEngine {
             }
         }.await;
 
+        // V0.3.5: 触发 Webhook 回调（fire-and-forget）
+        if let Some(ref webhook) = workflow.webhook {
+            if !webhook.url.is_empty() {
+                let error_str: Option<String>;
+                let (status, context, outputs, step_results) = match &result {
+                    Ok(r) => {
+                        error_str = None;
+                        (
+                            "completed",
+                            r.context.clone(),
+                            r.outputs.clone(),
+                            serde_json::to_value(&r.step_results).unwrap_or_default(),
+                        )
+                    }
+                    Err(e) => {
+                        error_str = Some(e.to_string());
+                        let ctx = state.context.clone();
+                        let outputs = self.build_workflow_outputs(&workflow, &state).unwrap_or_default();
+                        let step_results = serde_json::to_value(&state.step_results).unwrap_or_default();
+                        ("failed", ctx, outputs, step_results)
+                    }
+                };
+                let payload = build_webhook_payload(
+                    &workflow.id, &instance_id, status, &context, &outputs, &step_results, error_str.as_deref(),
+                );
+                let url = webhook.url.clone();
+                let secret = webhook.secret.clone();
+                let timeout_secs = webhook.timeout_secs.unwrap_or(30);
+                let retries = webhook.retries.unwrap_or(0).min(10);
+                let retry_delay = webhook.retry_delay.unwrap_or(5);
+                tokio::spawn(async move {
+                    send_webhook(&url, &payload, secret.as_deref(), timeout_secs, retries, retry_delay).await;
+                });
+            }
+        }
+
         let _ = completion_tx.send(result.clone());
         result.map(|_| ())
     }
@@ -1143,6 +1179,94 @@ impl WorkflowEngine {
             status: state.status,
         })
     }
+}
+
+// ── V0.3.5: Webhook 回调 ──
+
+fn compute_hmac_sha256(data: &[u8], secret: &str) -> String {
+    use hmac::{Hmac, Mac};
+    use sha2::Sha256;
+    let mut mac = Hmac::<Sha256>::new_from_slice(secret.as_bytes()).expect("HMAC key");
+    mac.update(data);
+    let sig = mac.finalize().into_bytes();
+    sig.iter().map(|b| format!("{:02x}", b)).collect::<String>()
+}
+
+fn build_webhook_payload(
+    workflow_id: &str,
+    execution_id: &str,
+    status: &str,
+    context: &Value,
+    outputs: &Value,
+    step_results: &Value,
+    error: Option<&str>,
+) -> Value {
+    let event = match status {
+        "completed" => "workflow.completed",
+        _ => "workflow.failed",
+    };
+    serde_json::json!({
+        "event": event,
+        "workflow_id": workflow_id,
+        "execution_id": execution_id,
+        "status": status,
+        "context": context,
+        "outputs": outputs,
+        "step_results": step_results,
+        "error": error,
+        "timestamp": Utc::now().to_rfc3339(),
+    })
+}
+
+async fn send_webhook(
+    url: &str,
+    payload: &Value,
+    secret: Option<&str>,
+    timeout_secs: u64,
+    retries: u64,
+    retry_delay: u64,
+) {
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(timeout_secs))
+        .build()
+        .unwrap_or_default();
+
+    let body = payload.to_string();
+    let mut req = client
+        .post(url)
+        .header("Content-Type", "application/json")
+        .body(body.clone());
+
+    if let Some(secret) = secret {
+        let sig = compute_hmac_sha256(body.as_bytes(), secret);
+        req = req.header("X-Tavern-Signature", format!("sha256={}", sig));
+    }
+
+    for attempt in 0..=retries {
+        match req.try_clone() {
+            Some(r) => {
+                let resp = r.send().await;
+                match resp {
+                    Ok(r) if r.status().is_success() => {
+                        tracing::info!(url = %url, attempt = attempt, "webhook delivered");
+                        return;
+                    }
+                    Ok(r) => {
+                        tracing::warn!(url = %url, status = %r.status(), attempt = attempt, "webhook delivery failed");
+                    }
+                    Err(e) => {
+                        tracing::warn!(url = %url, error = %e, attempt = attempt, "webhook delivery error");
+                    }
+                }
+            }
+            None => break,
+        }
+        if attempt < retries {
+            let delay = retry_delay * 2u64.pow(attempt as u32);
+            tokio::time::sleep(std::time::Duration::from_secs(delay)).await;
+        }
+    }
+    tracing::error!(url = %url, retries = retries, "webhook failed after all retries");
 }
 
 #[cfg(test)]

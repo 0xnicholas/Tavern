@@ -71,6 +71,7 @@ fn simple_workflow() -> Workflow {
         }],
         process: Process::Sequential,
         planning: None,
+            webhook: None,
     }
 }
 
@@ -262,6 +263,7 @@ async fn test_run_pipeline() {
         }],
         process: Process::Sequential,
         planning: None,
+            webhook: None,
     };
 
     let result = engine.run(&wf, json!({"topic": "AI"})).await.unwrap();
@@ -452,6 +454,7 @@ instructions: test
         outputs: vec![],
         process: Process::Sequential,
         planning: None,
+            webhook: None,
     };
 
     let start = Instant::now();
@@ -576,6 +579,7 @@ instructions: test
         outputs: vec![],
         process: Process::Sequential,
         planning: None,
+            webhook: None,
     };
 
     let start = Instant::now();
@@ -692,6 +696,7 @@ instructions: test
         outputs: vec![],
         process: Process::Sequential,
         planning: None,
+            webhook: None,
     };
 
     let start = Instant::now();
@@ -797,6 +802,7 @@ fn hierarchical_workflow() -> Workflow {
             instructions: None,
         }),
         planning: None,
+            webhook: None,
     }
 }
 
@@ -1350,6 +1356,7 @@ fn signal_workflow() -> Workflow {
         description: None,
         process: Process::Sequential,
         planning: None,
+            webhook: None,
         inputs: vec![],
         outputs: vec![],
         steps: vec![Step {
