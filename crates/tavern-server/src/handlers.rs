@@ -360,6 +360,171 @@ pub async fn run_workflow_handler(
     }))
 }
 
+// ── V0.3.4: 批量执行 ──
+
+const MAX_BATCH_SIZE: usize = 100;
+const MAX_BATCH_CONCURRENCY: usize = 50;
+
+#[derive(Deserialize)]
+pub struct BatchRunRequest {
+    pub inputs: Vec<Value>,
+    #[serde(default = "default_batch_concurrency")]
+    pub max_concurrency: u32,
+}
+
+fn default_batch_concurrency() -> u32 {
+    10
+}
+
+#[derive(Serialize)]
+pub struct BatchRunResponse {
+    pub workflow_id: String,
+    pub total: usize,
+    pub succeeded: usize,
+    pub failed: usize,
+    pub results: Vec<BatchResultItem>,
+}
+
+#[derive(Serialize)]
+pub struct BatchResultItem {
+    pub index: usize,
+    pub execution_id: String,
+    pub status: String,
+    pub inputs: Value,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub outputs: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+    pub duration_ms: u64,
+}
+
+pub async fn run_workflow_batch_handler(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+    Json(req): Json<BatchRunRequest>,
+) -> Result<impl IntoResponse, (StatusCode, ApiError)> {
+    use std::time::Instant;
+    use tokio::sync::Semaphore;
+    use tokio::task::JoinSet;
+
+    // 1. Validate
+    if req.inputs.is_empty() || req.inputs.len() > MAX_BATCH_SIZE {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            ApiError::new(
+                StatusCode::BAD_REQUEST,
+                "InvalidBatchSize",
+                format!("batch size must be 1-{}", MAX_BATCH_SIZE),
+            ),
+        ));
+    }
+    if req.max_concurrency == 0 || req.max_concurrency as usize > MAX_BATCH_CONCURRENCY {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            ApiError::new(
+                StatusCode::BAD_REQUEST,
+                "InvalidConcurrency",
+                format!("max_concurrency must be 1-{}", MAX_BATCH_CONCURRENCY),
+            ),
+        ));
+    }
+
+    // 2. Lookup workflow
+    let workflow = {
+        let registry = state.registry.read().await;
+        match registry.get(&id) {
+            Some(w) => w.clone(),
+            None => return Err(map_comp_error(CompError::WorkflowNotFound { id })),
+        }
+    };
+
+    // 3. Parallel execution
+    let engine = Arc::new(
+        tavern_comp::WorkflowEngine::new(state.hero.clone())
+            .with_max_concurrency(state.max_concurrency)
+            .with_store(state.event_store.clone()),
+    );
+
+    let semaphore = Arc::new(Semaphore::new(req.max_concurrency as usize));
+    let mut join_set = JoinSet::new();
+    let total = req.inputs.len();
+
+    for (i, inputs) in req.inputs.into_iter().enumerate() {
+        let engine = engine.clone();
+        let workflow = workflow.clone();
+        let inputs_for_result = inputs.clone();
+        let permit = semaphore.clone().acquire_owned().await.unwrap();
+        join_set.spawn(async move {
+            let _permit = permit;
+            let start = Instant::now();
+            let result = engine.run(&workflow, inputs).await;
+            let duration_ms = start.elapsed().as_millis() as u64;
+            (i, inputs_for_result, result, duration_ms)
+        });
+    }
+
+    // 4. Collect results
+    let mut items: Vec<BatchResultItem> = Vec::new();
+    let mut succeeded = 0usize;
+    let mut failed = 0usize;
+    let mut total_duration_ms = 0u64;
+
+    while let Some(Ok((i, inputs, result, duration_ms))) = join_set.join_next().await {
+        total_duration_ms += duration_ms;
+        match result {
+            Ok(r) => {
+                succeeded += 1;
+                items.push(BatchResultItem {
+                    index: i,
+                    execution_id: r
+                        .step_results
+                        .keys()
+                        .next()
+                        .cloned()
+                        .unwrap_or_default(),
+                    status: "completed".to_string(),
+                    inputs,
+                    outputs: Some(r.outputs),
+                    error: None,
+                    duration_ms,
+                });
+            }
+            Err(e) => {
+                failed += 1;
+                items.push(BatchResultItem {
+                    index: i,
+                    execution_id: String::new(),
+                    status: "failed".to_string(),
+                    inputs,
+                    outputs: None,
+                    error: Some(e.to_string()),
+                    duration_ms,
+                });
+            }
+        }
+    }
+    items.sort_by_key(|r| r.index);
+
+    // 5. Update metrics
+    state
+        .workflow_executions
+        .fetch_add(total as u64, Ordering::Relaxed);
+    state
+        .workflow_failures
+        .fetch_add(failed as u64, Ordering::Relaxed);
+    state
+        .workflow_duration_ms_total
+        .fetch_add(total_duration_ms, Ordering::Relaxed);
+
+    Ok(Json(BatchRunResponse {
+        workflow_id: id,
+        total,
+        succeeded,
+        failed,
+        results: items,
+    }))
+}
+
 #[derive(Serialize)]
 pub struct StartWorkflowResponse {
     pub execution_id: String,

@@ -29,6 +29,10 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         .route("/workflows/:id", delete(handlers::delete_workflow_handler))
         .route("/workflows/:id/run", post(handlers::run_workflow_handler))
         .route(
+            "/workflows/:id/run_batch",
+            post(handlers::run_workflow_batch_handler),
+        )
+        .route(
             "/workflows/:id/start",
             post(handlers::start_workflow_handler),
         )

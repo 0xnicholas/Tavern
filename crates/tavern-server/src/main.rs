@@ -1390,4 +1390,114 @@ instructions: 研究
         }
         assert_eq!(status, "failed");
     }
+
+    // ── V0.3.4: 批量执行测试 ──
+
+    #[tokio::test]
+    async fn test_run_workflow_batch_all_success() {
+        let app = create_test_app().await;
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/workflows/content_pipeline/run_batch")
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        json!({
+                            "inputs": [
+                                {"topic": "AI"},
+                                {"topic": "Rust"},
+                                {"topic": "DB"}
+                            ]
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["total"], 3);
+        assert_eq!(json["succeeded"], 3);
+        assert_eq!(json["failed"], 0);
+        assert_eq!(json["results"].as_array().unwrap().len(), 3);
+        for result in json["results"].as_array().unwrap() {
+            assert_eq!(result["status"], "completed");
+            assert!(result["duration_ms"].as_u64().unwrap() > 0);
+        }
+    }
+
+    #[tokio::test]
+    async fn test_run_workflow_batch_partial_failure() {
+        let app = create_test_app().await;
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/workflows/content_pipeline/run_batch")
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        json!({
+                            "inputs": [
+                                {"topic": "AI"},
+                                {}
+                            ]
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        // Partial failure returns 200
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["total"], 2);
+        assert_eq!(json["succeeded"], 1);
+        assert_eq!(json["failed"], 1);
+    }
+
+    #[tokio::test]
+    async fn test_run_workflow_batch_empty_400() {
+        let app = create_test_app().await;
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/workflows/content_pipeline/run_batch")
+                    .header("content-type", "application/json")
+                    .body(Body::from(json!({ "inputs": [] }).to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn test_run_workflow_batch_not_found_404() {
+        let app = create_test_app().await;
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/workflows/unknown/run_batch")
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        json!({ "inputs": [{ "x": 1 }] }).to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    }
 }
