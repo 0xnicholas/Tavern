@@ -19,8 +19,9 @@ pub fn load_agent(path: &Path) -> Result<AgentConfig, TavernError> {
 /// 遍历目录下所有 `.yaml` / `.yml` 文件。
 /// 遇到首个错误即终止，此前已加载的配置保留在返回的 Vec 中（不回滚）。
 pub fn load_from_dir(dir: &Path) -> Result<Vec<(AgentConfig, PathBuf)>, TavernError> {
+    let canonical_dir = std::fs::canonicalize(dir).map_err(TavernError::Io)?;
     let mut configs = Vec::new();
-    for entry in std::fs::read_dir(dir)? {
+    for entry in std::fs::read_dir(&canonical_dir)? {
         let entry = entry?;
         if !entry.file_type()?.is_file() {
             continue;

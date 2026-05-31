@@ -20,6 +20,8 @@ pub struct AppState {
     pub workflow_failures: Arc<AtomicU64>,
     /// 工作流执行总耗时（毫秒）
     pub workflow_duration_ms_total: Arc<AtomicU64>,
+    /// 工作流执行耗时直方图桶 (ms): <100, <500, <1k, <5k, <30k, <60k, >=60k
+    pub workflow_duration_buckets: [Arc<AtomicU64>; 7],
     /// 工作流最大并发数
     pub max_concurrency: usize,
     /// 事件存储

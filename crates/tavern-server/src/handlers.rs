@@ -6,7 +6,7 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use tavern_comp::CompError;
 use tavern_core::RuntimeError;
@@ -174,6 +174,14 @@ pub fn map_comp_error(err: CompError) -> (StatusCode, ApiError) {
                 format!("Invalid input type: expected JSON object, got {}", got),
             ),
         ),
+        CompError::ConfigParse { reason, .. } => (
+            StatusCode::BAD_REQUEST,
+            ApiError::new(
+                StatusCode::BAD_REQUEST,
+                "ConfigParse",
+                format!("Configuration error: {}", reason),
+            ),
+        ),
         CompError::TemplateParse { reason } => (
             StatusCode::BAD_REQUEST,
             ApiError::new(
@@ -328,9 +336,11 @@ pub async fn run_workflow_handler(
     let result = match engine.run(&workflow, inputs).await {
         Ok(r) => {
             state.workflow_executions.fetch_add(1, Ordering::Relaxed);
+            let ms = start.elapsed().as_millis() as u64;
             state
                 .workflow_duration_ms_total
-                .fetch_add(start.elapsed().as_millis() as u64, Ordering::Relaxed);
+                .fetch_add(ms, Ordering::Relaxed);
+            record_duration_bucket(&state.workflow_duration_buckets, ms);
             r
         }
         Err(e) => {
@@ -641,6 +651,22 @@ pub async fn reload_workflows_handler(
     Ok(StatusCode::NO_CONTENT)
 }
 
+// ── Helper ──
+
+/// 将执行耗时计入对应的直方图桶。
+fn record_duration_bucket(buckets: &[Arc<AtomicU64>; 7], ms: u64) {
+    let idx = match ms {
+        0..100 => 0,
+        100..500 => 1,
+        500..1000 => 2,
+        1000..5000 => 3,
+        5000..30000 => 4,
+        30000..60000 => 5,
+        _ => 6,
+    };
+    buckets[idx].fetch_add(1, Ordering::Relaxed);
+}
+
 // ---------- Metrics handler ----------
 
 pub async fn metrics_handler(State(state): State<Arc<AppState>>) -> impl IntoResponse {
@@ -648,6 +674,13 @@ pub async fn metrics_handler(State(state): State<Arc<AppState>>) -> impl IntoRes
     let failures = state.workflow_failures.load(Ordering::Relaxed);
     let duration_ms = state.workflow_duration_ms_total.load(Ordering::Relaxed);
 
+    let b = &state.workflow_duration_buckets;
+    let b0 = b[0].load(Ordering::Relaxed);
+    let b1 = b[1].load(Ordering::Relaxed);
+    let b2 = b[2].load(Ordering::Relaxed);
+    let b3 = b[3].load(Ordering::Relaxed);
+    let b4 = b[4].load(Ordering::Relaxed);
+    let b5 = b[5].load(Ordering::Relaxed);
     let body = format!(
         "# HELP tavern_workflow_executions_total Total workflow executions\n\
          # TYPE tavern_workflow_executions_total counter\n\
@@ -655,10 +688,28 @@ pub async fn metrics_handler(State(state): State<Arc<AppState>>) -> impl IntoRes
          # HELP tavern_workflow_execution_failures_total Total workflow execution failures\n\
          # TYPE tavern_workflow_execution_failures_total counter\n\
          tavern_workflow_execution_failures_total {}\n\n\
-         # HELP tavern_workflow_execution_duration_ms_total Total workflow execution duration in milliseconds\n\
+         # HELP tavern_workflow_execution_duration_ms_total Cumulative workflow execution duration in milliseconds\n\
          # TYPE tavern_workflow_execution_duration_ms_total counter\n\
-         tavern_workflow_execution_duration_ms_total {}\n",
-        executions, failures, duration_ms
+         tavern_workflow_execution_duration_ms_total {}\n\n\
+         # HELP tavern_workflow_execution_duration_seconds Histogram of workflow execution durations\n\
+         # TYPE tavern_workflow_execution_duration_seconds histogram\n\
+         tavern_workflow_execution_duration_seconds_bucket{{le=\"0.1\"}} {}\n\
+         tavern_workflow_execution_duration_seconds_bucket{{le=\"0.5\"}} {}\n\
+         tavern_workflow_execution_duration_seconds_bucket{{le=\"1\"}} {}\n\
+         tavern_workflow_execution_duration_seconds_bucket{{le=\"5\"}} {}\n\
+         tavern_workflow_execution_duration_seconds_bucket{{le=\"30\"}} {}\n\
+         tavern_workflow_execution_duration_seconds_bucket{{le=\"60\"}} {}\n\
+         tavern_workflow_execution_duration_seconds_bucket{{le=\"+Inf\"}} {}\n\
+         tavern_workflow_execution_duration_seconds_count {}\n\
+         tavern_workflow_execution_duration_seconds_sum {}\n",
+        executions,
+        failures,
+        duration_ms,
+        b0, b0 + b1, b0 + b1 + b2, b0 + b1 + b2 + b3,
+        b0 + b1 + b2 + b3 + b4, b0 + b1 + b2 + b3 + b4 + b5,
+        executions,
+        executions,
+        duration_ms as f64 / 1000.0,
     );
 
     (
@@ -764,11 +815,30 @@ pub async fn list_flows_handler(State(state): State<Arc<AppState>>) -> impl Into
     Json(FlowListResponse { flows })
 }
 
+const MAX_FLOW_INPUT_SIZE: usize = 1024 * 1024; // 1 MiB
+
 pub async fn start_flow_handler(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
     Json(body): Json<StartFlowRequest>,
 ) -> Result<impl IntoResponse, (StatusCode, ApiError)> {
+    // Validate input size
+    if let Ok(serialized) = serde_json::to_vec(&body.inputs) {
+        if serialized.len() > MAX_FLOW_INPUT_SIZE {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                ApiError {
+                    error: "InputTooLarge".to_string(),
+                    message: format!(
+                        "flow inputs exceed max size of {} bytes",
+                        MAX_FLOW_INPUT_SIZE
+                    ),
+                    status: StatusCode::BAD_REQUEST,
+                },
+            ));
+        }
+    }
+
     let instance = state
         .flow_registry
         .create_instance(&id, body.inputs)
@@ -846,18 +916,20 @@ pub async fn cancel_flow_handler(
     State(state): State<Arc<AppState>>,
     Path(flow_id): Path<String>,
 ) -> Result<impl IntoResponse, (StatusCode, ApiError)> {
-    let _handles = state.flow_handles.read().await;
-    // Cancel requires the handle which is owned by the spawned cleanup task.
-    // For now, just check existence and return 202.
-    if !_handles.contains_key(&flow_id) {
-        return Err((
+    let handles = state.flow_handles.read().await;
+    match handles.get(&flow_id) {
+        Some(ref_handle) => {
+            ref_handle.cancel();
+            tracing::info!(flow_id = %flow_id, "flow cancellation requested");
+            Ok(StatusCode::ACCEPTED)
+        }
+        None => Err((
             StatusCode::NOT_FOUND,
             ApiError {
                 error: "flow not found".to_string(),
                 message: format!("flow '{}' not found", flow_id),
                 status: StatusCode::NOT_FOUND,
             },
-        ));
+        )),
     }
-    Ok(StatusCode::ACCEPTED)
 }

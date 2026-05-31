@@ -228,6 +228,8 @@ pub struct FlowEngine<F> {
     graph: FlowGraph,
     store: Option<Arc<dyn tavern_comp::EventStore>>,
     max_concurrency: usize,
+    /// 取消标志，外部可通过 FlowHandleRef 设置
+    cancelled: Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl<F: Flow + FlowDispatch + Send + 'static> FlowEngine<F> {
@@ -239,6 +241,7 @@ impl<F: Flow + FlowDispatch + Send + 'static> FlowEngine<F> {
             graph,
             store: None,
             max_concurrency: 1,
+            cancelled: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         }
     }
 
@@ -253,10 +256,10 @@ impl<F: Flow + FlowDispatch + Send + 'static> FlowEngine<F> {
     }
 
     /// 异步启动 flow（非阻塞），返回 FlowHandle 用于等待结果。
-    pub fn start_async(self) -> (FlowHandle, FlowHandleRef) {
+    pub fn start_async(mut self) -> (FlowHandle, FlowHandleRef) {
         let flow_id = uuid::Uuid::new_v4().to_string();
         let status = Arc::new(std::sync::atomic::AtomicU8::new(1)); // running
-        let (cancel_tx, _cancel_rx) = tokio::sync::oneshot::channel::<()>();
+        let cancelled = Arc::new(std::sync::atomic::AtomicBool::new(false));
         let (completion_tx, completion_rx) =
             tokio::sync::oneshot::channel::<Result<serde_json::Value, FlowError>>();
 
@@ -264,21 +267,26 @@ impl<F: Flow + FlowDispatch + Send + 'static> FlowEngine<F> {
             flow_id: flow_id.clone(),
             flow_name: "unnamed".to_string(),
             status: status.clone(),
+            cancelled: cancelled.clone(),
             started_at: chrono::Utc::now(),
         };
 
         let max_concurrency = self.max_concurrency;
         let status_clone = status.clone();
+        self.cancelled = cancelled.clone();
         tokio::spawn(async move {
             let result = if max_concurrency > 1 {
-                Self::execute_inner_parallel(self.flow, self.graph, self.store, max_concurrency)
-                    .await
+                Self::execute_inner_parallel(
+                    self.flow, self.graph, self.store, max_concurrency, cancelled,
+                )
+                .await
             } else {
                 let mut engine = Self {
                     flow: self.flow,
                     graph: self.graph,
                     store: self.store,
                     max_concurrency: 1,
+                    cancelled,
                 };
                 engine.execute_inner().await
             };
@@ -295,7 +303,6 @@ impl<F: Flow + FlowDispatch + Send + 'static> FlowEngine<F> {
         let handle = FlowHandle {
             flow_id,
             completion_rx: Some(completion_rx),
-            cancel_tx: Some(cancel_tx),
             status,
         };
         (handle, ref_handle)
@@ -307,6 +314,15 @@ impl<F: Flow + FlowDispatch + Send + 'static> FlowEngine<F> {
         _inputs: serde_json::Value,
     ) -> Result<serde_json::Value, FlowError> {
         self.execute_inner().await
+    }
+
+    /// 检查是否已被取消。
+    fn check_cancelled(&self) -> Result<(), FlowError> {
+        if self.cancelled.load(std::sync::atomic::Ordering::Relaxed) {
+            Err(FlowError::Other("cancelled".to_string()))
+        } else {
+            Ok(())
+        }
     }
 
     /// 内部事件循环实现。
@@ -331,6 +347,8 @@ impl<F: Flow + FlowDispatch + Send + 'static> FlowEngine<F> {
         let mut last_output: Option<serde_json::Value> = None;
 
         while let Some(method_name) = pending.pop_front() {
+            self.check_cancelled()?;
+
             let input = self
                 .graph
                 .upstream_for(&method_name)
@@ -414,6 +432,7 @@ impl<F: Flow + FlowDispatch + Send + 'static> FlowEngine<F> {
         mut graph: FlowGraph,
         _store: Option<Arc<dyn tavern_comp::EventStore>>,
         max_concurrency: usize,
+        cancelled: Arc<std::sync::atomic::AtomicBool>,
     ) -> Result<serde_json::Value, FlowError> {
         use tokio::sync::Semaphore;
         use tokio::task::JoinSet;
@@ -431,6 +450,10 @@ impl<F: Flow + FlowDispatch + Send + 'static> FlowEngine<F> {
         }
 
         while !pending.is_empty() {
+            if cancelled.load(std::sync::atomic::Ordering::Relaxed) {
+                return Err(FlowError::Other("cancelled".to_string()));
+            }
+
             let mut join_set = JoinSet::new();
 
             // Spawn current batch
@@ -492,7 +515,7 @@ impl<F: Flow + FlowDispatch + Send + 'static> FlowEngine<F> {
 pub struct FlowHandle {
     pub flow_id: String,
     completion_rx: Option<tokio::sync::oneshot::Receiver<Result<serde_json::Value, FlowError>>>,
-    cancel_tx: Option<tokio::sync::oneshot::Sender<()>>,
+    #[allow(dead_code)]
     status: Arc<std::sync::atomic::AtomicU8>,
 }
 
@@ -509,20 +532,15 @@ impl FlowHandle {
         }
     }
 
-    /// 取消 flow 执行。
-    pub fn cancel(&mut self) {
-        if let Some(tx) = self.cancel_tx.take() {
-            let _ = tx.send(());
-        }
-    }
 }
 
-/// FlowHandleRef — 轻量引用（Clone + Send），用于状态查询。
+/// FlowHandleRef — 轻量引用（Clone + Send），用于状态查询和取消。
 #[derive(Clone, Debug)]
 pub struct FlowHandleRef {
     pub flow_id: String,
     pub flow_name: String,
     pub status: Arc<std::sync::atomic::AtomicU8>,
+    pub cancelled: Arc<std::sync::atomic::AtomicBool>,
     pub started_at: chrono::DateTime<chrono::Utc>,
 }
 
@@ -533,8 +551,14 @@ impl FlowHandleRef {
             1 => "running",
             2 => "completed",
             3 => "failed",
+            4 => "cancelled",
             _ => "unknown",
         }
+    }
+
+    /// 取消执行。
+    pub fn cancel(&self) {
+        self.cancelled.store(true, std::sync::atomic::Ordering::SeqCst);
     }
 }
 
@@ -712,7 +736,7 @@ mod tests {
 
     // ── Proc-macro 验证: #[flow_impl] 生成正确的包装 ──
 
-    use tavern_flow_macros::{flow_impl, listen, start, Flow};
+    use tavern_flow_macros::{flow_impl, Flow};
 
     #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
     struct MacroState {
@@ -782,7 +806,7 @@ mod tests {
     /// FlowEngine 完整事件循环：start → listen chain。
     #[tokio::test]
     async fn test_flow_engine_event_loop() {
-        let mut pipeline = MacroPipeline {
+        let pipeline = MacroPipeline {
             state: MacroState {
                 value: String::new(),
             },
@@ -799,7 +823,6 @@ mod tests {
     /// FlowEngine 事件循环 + router 条件分支。
     #[tokio::test]
     async fn test_flow_engine_with_router() {
-        use tavern_flow_macros::router;
 
         #[derive(Flow)]
         struct RouterPipeline {

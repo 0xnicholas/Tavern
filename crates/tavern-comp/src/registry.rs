@@ -67,7 +67,8 @@ impl WorkflowRegistry {
     /// 遍历目录下所有 `.yaml` / `.yml` 文件。
     /// 遇到首个错误即终止，此前已加载的 Workflow 保留在注册表中（不回滚）。
     pub fn load_from_dir(&mut self, dir: &Path) -> Result<(), CompError> {
-        for entry in std::fs::read_dir(dir)? {
+        let canonical_dir = std::fs::canonicalize(dir).map_err(CompError::Io)?;
+        for entry in std::fs::read_dir(&canonical_dir)? {
             let entry = entry?;
             if !entry.file_type()?.is_file() {
                 continue;

@@ -112,7 +112,7 @@ impl InstanceState {
             } => {
                 self.running_steps.remove(step_id);
                 self.completed_steps.insert(step_id.clone());
-                if let Some(ref key) = output_key {
+                if let Some(key) = output_key {
                     if let Some(obj) = self.context.as_object_mut() {
                         obj.insert(key.clone(), output.clone());
                     }

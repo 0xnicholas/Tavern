@@ -49,11 +49,19 @@ pub struct FlowRegistry {
 
 impl FlowRegistry {
     pub fn new() -> Self {
+        Self::default()
+    }
+}
+
+impl Default for FlowRegistry {
+    fn default() -> Self {
         Self {
             entries: RwLock::new(HashMap::new()),
         }
     }
+}
 
+impl FlowRegistry {
     pub async fn register(&self, id: &str, name: &str, factory: Box<dyn FlowFactory>) {
         self.entries.write().await.insert(
             id.to_string(),

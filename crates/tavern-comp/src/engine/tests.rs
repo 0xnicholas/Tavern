@@ -1352,7 +1352,7 @@ async fn test_recover_after_signal_wait_resumes() {
     let wf = signal_workflow();
 
     // 1. 启动工作流
-    let mut handle = engine.start(&wf, json!({})).await.unwrap();
+    let handle = engine.start(&wf, json!({})).await.unwrap();
     let instance_id = handle.id().to_string();
 
     // 2. 等待进入 WaitingForSignal

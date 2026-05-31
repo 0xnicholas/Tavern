@@ -28,7 +28,7 @@ impl StepExecutor {
         }
     }
 
-    pub async fn submit(&self, step: Step, context: Value, attempt: u64, will_retry: bool) {
+    pub async fn submit(&self, step: Arc<Step>, context: Value, attempt: u64, will_retry: bool) {
         let hero = self.hero.clone();
         let tx = self.tx.clone();
         let output_key = step.output_key.clone();

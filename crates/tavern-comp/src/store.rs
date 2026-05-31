@@ -733,6 +733,7 @@ mod tests {
     // ── PostgreSQLEventStore tests ──
     // 需要 TEST_POSTGRES_URL 环境变量（如: postgres://tavern:tavern@localhost:5432/tavern）
 
+    #[allow(dead_code)]
     fn pg_test_url() -> Option<String> {
         std::env::var("TEST_POSTGRES_URL").ok()
     }

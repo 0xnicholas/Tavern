@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::sync::Arc;
 
 use chrono::Utc;
@@ -570,7 +569,7 @@ impl WorkflowEngine {
                             self.apply_and_persist(&instance_id, event, &mut state)
                                 .await?;
 
-                            executor.submit(step.clone(), state.context.clone(), attempt, will_retry)
+                            executor.submit(Arc::new(step.clone()), state.context.clone(), attempt, will_retry)
                                 .await;
                         }
                     }
@@ -715,13 +714,7 @@ impl WorkflowEngine {
             _ => {}
         }
 
-        let mut in_degree: HashMap<String, usize> = HashMap::new();
-        for step in &workflow.steps {
-            in_degree.entry(step.id.clone()).or_insert(0);
-            for _dep in &step.depends_on {
-                *in_degree.entry(step.id.clone()).or_insert(0) += 1;
-            }
-        }
+        let mut in_degree = crate::validator::build_dag_maps(workflow).in_degree;
 
         for completed in &state.completed_steps {
             for step in &workflow.steps {
@@ -926,7 +919,7 @@ impl WorkflowEngine {
 
                                 executor
                                     .submit(
-                                        step.clone(),
+                                        Arc::new(step.clone()),
                                         state.context.clone(),
                                         attempt,
                                         will_retry,
