@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::error::CompError;
-use crate::event::WorkflowEvent;
+use crate::event::{SignalAction, WorkflowEvent};
 use crate::workflow::StepStatus;
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -164,8 +164,28 @@ impl InstanceState {
             WorkflowEvent::SignalReceived {
                 signal_name,
                 payload,
+                action,
+                reviewer,
                 ..
             } => {
+                // V0.3.2: 审批驳回 → 终止工作流
+                if matches!(action, Some(SignalAction::Reject)) {
+                    let reason = reviewer
+                        .as_deref()
+                        .map(|r| format!("rejected by {}: {}", r, payload.get("reason").and_then(|v| v.as_str()).unwrap_or("no reason")))
+                        .unwrap_or_else(|| format!("rejected: {}", payload.get("reason").and_then(|v| v.as_str()).unwrap_or("no reason")));
+                    let blocked_step_ids: Vec<String> = self.signal_blocked_steps.iter().cloned().collect();
+                    self.signal_blocked_steps.clear();
+                    self.status = InstanceStatus::Failed;
+                    for step_id in blocked_step_ids {
+                        if let Some(result) = self.step_results.get_mut(&step_id) {
+                            result.status = StepStatus::Failed;
+                            result.error = Some(reason.clone());
+                        }
+                    }
+                    return Ok(());
+                }
+
                 let expected = matches!(
                     self.status,
                     InstanceStatus::WaitingForSignal { ref signal } if signal == signal_name
@@ -341,6 +361,8 @@ mod tests {
 
         state
             .apply(&WorkflowEvent::SignalReceived {
+                action: None,
+                reviewer: None,
                 signal_name: "approve".to_string(),
                 payload: json!({"by": "admin"}),
                 received_at: Utc::now(),
@@ -357,12 +379,87 @@ mod tests {
         let mut state = blank_state();
         state.status = InstanceStatus::Running;
         let result = state.apply(&WorkflowEvent::SignalReceived {
+                action: None,
+                reviewer: None,
             signal_name: "approve".to_string(),
             payload: json!({}),
             received_at: Utc::now(),
         });
         assert!(result.is_ok());
         assert!(matches!(state.status, InstanceStatus::Running));
+    }
+
+    // ── V0.3.2: 审批测试 ──
+
+    #[test]
+    fn test_apply_signal_received_reject_fails_workflow() {
+        let mut state = blank_state();
+        state
+            .apply(&WorkflowEvent::InstanceCreated {
+                workflow_id: "wf".to_string(),
+                inputs: json!({}),
+            })
+            .unwrap();
+        state
+            .apply(&WorkflowEvent::SignalWaitStarted {
+                step_id: "s1".to_string(),
+                signal_name: "approve".to_string(),
+            })
+            .unwrap();
+        state.step_results.insert(
+            "s1".to_string(),
+            crate::workflow::StepResult {
+                status: StepStatus::Completed,
+                output: Some(json!("draft")),
+                error: None,
+                started_at: Some(Utc::now()),
+                completed_at: Some(Utc::now()),
+                attempt: 1,
+            },
+        );
+
+        let result = state.apply(&WorkflowEvent::SignalReceived {
+            action: Some(SignalAction::Reject),
+            reviewer: Some("alice".to_string()),
+            signal_name: "approve".to_string(),
+            payload: json!({"reason": "needs work"}),
+            received_at: Utc::now(),
+        });
+        assert!(result.is_ok());
+        assert!(matches!(state.status, InstanceStatus::Failed));
+        let s1 = state.step_results.get("s1").unwrap();
+        assert!(matches!(s1.status, StepStatus::Failed));
+        assert!(s1.error.as_ref().unwrap().contains("alice"));
+        assert!(s1.error.as_ref().unwrap().contains("needs work"));
+    }
+
+    #[test]
+    fn test_apply_signal_received_approve_continues() {
+        let mut state = blank_state();
+        state
+            .apply(&WorkflowEvent::InstanceCreated {
+                workflow_id: "wf".to_string(),
+                inputs: json!({}),
+            })
+            .unwrap();
+        state
+            .apply(&WorkflowEvent::SignalWaitStarted {
+                step_id: "s1".to_string(),
+                signal_name: "approve".to_string(),
+            })
+            .unwrap();
+
+        let result = state.apply(&WorkflowEvent::SignalReceived {
+            action: Some(SignalAction::Approve),
+            reviewer: Some("alice".to_string()),
+            signal_name: "approve".to_string(),
+            payload: json!({}),
+            received_at: Utc::now(),
+        });
+        assert!(result.is_ok());
+        assert!(matches!(state.status, InstanceStatus::Running));
+        assert!(state.signal_blocked_steps.is_empty());
+        assert_eq!(state.context["signals"]["approve"], json!({}));
     }
 
     #[test]

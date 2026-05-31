@@ -8,12 +8,12 @@ use uuid::Uuid;
 
 use crate::context::render_template;
 use crate::error::CompError;
-use crate::event::WorkflowEvent;
+use crate::event::{SignalAction, WorkflowEvent};
 use crate::executor::StepExecutor;
 use crate::instance::{InstanceState, InstanceStatus};
 use crate::store::{EventStore, MemoryEventStore};
 use crate::timer::TimerRegistry;
-use crate::workflow::{ManagerConfig, Process, StepStatus, Workflow, WorkflowResult};
+use crate::workflow::{ManagerConfig, Process, SignalTimeoutAction, StepStatus, Workflow, WorkflowResult};
 
 use super::handle::ExecutionHandle;
 
@@ -614,16 +614,34 @@ impl WorkflowEngine {
                                 if let WorkflowEvent::TimerFired { timer_id } = &event {
                                     if timer_id.starts_with("signal_timeout_") {
                                         let step_id = timer_id.strip_prefix("signal_timeout_").unwrap();
-                                        let reason = format!("signal '{}' timeout", step_id);
-                                        let fail_event = WorkflowEvent::WorkflowFailed {
-                                            reason: reason.clone(),
-                                            failed_at: Utc::now(),
-                                        };
-                                        self.apply_and_persist(&instance_id, fail_event, &mut state).await?;
-                                        break Err(CompError::StepFailed {
-                                            step_id: step_id.to_string(),
-                                            reason,
-                                        });
+                                        // V0.3.2: 检查 signal_timeout_action 配置
+                                        let timeout_action = workflow
+                                            .steps
+                                            .iter()
+                                            .find(|s| s.id == step_id)
+                                            .and_then(|s| s.signal_timeout_action.as_ref());
+
+                                        if matches!(timeout_action, Some(SignalTimeoutAction::Reject)) {
+                                            let reject_event = WorkflowEvent::SignalReceived {
+                                                signal_name: format!("signal_{}", step_id),
+                                                payload: serde_json::json!({"reason": "approval timed out"}),
+                                                received_at: Utc::now(),
+                                                action: Some(SignalAction::Reject),
+                                                reviewer: Some("system".to_string()),
+                                            };
+                                            self.apply_and_persist(&instance_id, reject_event, &mut state).await?;
+                                        } else {
+                                            let reason = format!("signal '{}' timeout", step_id);
+                                            let fail_event = WorkflowEvent::WorkflowFailed {
+                                                reason: reason.clone(),
+                                                failed_at: Utc::now(),
+                                            };
+                                            self.apply_and_persist(&instance_id, fail_event, &mut state).await?;
+                                            break Err(CompError::StepFailed {
+                                                step_id: step_id.to_string(),
+                                                reason,
+                                            });
+                                        }
                                     }
                                 }
                             }
@@ -1059,6 +1077,60 @@ fn normalize_inputs(workflow: &Workflow, inputs: &Value) -> Result<Value, CompEr
     }
 
     Ok(Value::Object(obj))
+}
+
+/// V0.3.2: 执行实例的摘要信息（用于克隆等场景）。
+pub struct ExecutionInfo {
+    pub workflow_id: String,
+    pub inputs: Value,
+    pub status: InstanceStatus,
+}
+
+impl WorkflowEngine {
+    /// 从 EventStore 读取执行实例的 inputs、workflow_id 和当前状态。
+    /// 一次读取完成，避免 handler 层二次查询。
+    pub async fn get_execution_info(
+        &self,
+        instance_id: &str,
+    ) -> Result<ExecutionInfo, CompError> {
+        let events = self.store.read_stream(instance_id).await?;
+        if events.is_empty() {
+            return Err(CompError::InstanceNotFound {
+                id: instance_id.to_string(),
+            });
+        }
+
+        let mut workflow_id = None;
+        let mut inputs = None;
+        let mut state = InstanceState {
+            id: instance_id.to_string(),
+            ..Default::default()
+        };
+
+        for event in &events {
+            match event {
+                WorkflowEvent::InstanceCreated {
+                    workflow_id: wid,
+                    inputs: inp,
+                } => {
+                    workflow_id = Some(wid.clone());
+                    inputs = Some(inp.clone());
+                }
+                _ => {}
+            }
+            let _ = state.apply(event);
+        }
+
+        let workflow_id =
+            workflow_id.ok_or_else(|| CompError::Internal("no InstanceCreated event".into()))?;
+        let inputs = inputs.unwrap_or(Value::Null);
+
+        Ok(ExecutionInfo {
+            workflow_id,
+            inputs,
+            status: state.status,
+        })
+    }
 }
 
 #[cfg(test)]

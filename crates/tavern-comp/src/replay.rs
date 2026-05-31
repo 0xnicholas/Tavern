@@ -470,6 +470,7 @@ mod tests {
                     wait_for_signal: None,
                     signal_timeout: None,
                     expected_output: None,
+            signal_timeout_action: None,
                 },
                 Step {
                     id: "write".to_string(),
@@ -483,6 +484,7 @@ mod tests {
                     wait_for_signal: None,
                     signal_timeout: None,
                     expected_output: None,
+            signal_timeout_action: None,
                 },
             ],
             inputs: vec![],

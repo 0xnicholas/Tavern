@@ -31,6 +31,7 @@ fn default_workflow() -> tavern_comp::Workflow {
                 wait_for_signal: None,
                 signal_timeout: None,
                 expected_output: None,
+            signal_timeout_action: None,
             },
             tavern_comp::Step {
                 id: "write".to_string(),
@@ -44,6 +45,7 @@ fn default_workflow() -> tavern_comp::Workflow {
                 wait_for_signal: None,
                 signal_timeout: None,
                 expected_output: None,
+            signal_timeout_action: None,
             },
             tavern_comp::Step {
                 id: "edit".to_string(),
@@ -57,6 +59,7 @@ fn default_workflow() -> tavern_comp::Workflow {
                 wait_for_signal: None,
                 signal_timeout: None,
                 expected_output: None,
+            signal_timeout_action: None,
             },
         ],
         inputs: vec![tavern_comp::InputDef {
@@ -144,6 +147,7 @@ instructions: 编辑
         event_broadcasts: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
         flow_registry: Arc::new(tavern_flow::FlowRegistry::new()),
         flow_handles: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
+        rate_limiter: tavern_server::ratelimit::RateLimiter::new(false, 10, std::collections::HashMap::new()),
         config: tavern_config::TavernConfig::default(),
     }))
 }
@@ -405,6 +409,7 @@ async fn test_end_to_end_signal_workflow() {
             wait_for_signal: Some("approve".to_string()),
             signal_timeout: None,
             expected_output: None,
+            signal_timeout_action: None,
         }],
         inputs: vec![],
         outputs: vec![tavern_comp::OutputDef {
@@ -649,6 +654,7 @@ instructions: 编辑
         event_broadcasts: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
         flow_registry: Arc::new(tavern_flow::FlowRegistry::new()),
         flow_handles: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
+        rate_limiter: tavern_server::ratelimit::RateLimiter::new(false, 10, std::collections::HashMap::new()),
         config,
     }))
 }

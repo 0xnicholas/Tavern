@@ -56,7 +56,24 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         .route(
             "/executions/:id/replay",
             get(handlers::replay_execution_handler),
+        )
+        .route(
+            "/executions/:id/clone",
+            post(handlers::clone_execution_handler),
         );
+
+    // V0.3.2: 审批端点
+    let approval_routes = Router::new()
+        .route("/approvals", get(handlers::list_approvals_handler))
+        .route(
+            "/executions/:id/steps/:step_id/approve",
+            post(handlers::approve_step_handler),
+        )
+        .route(
+            "/executions/:id/steps/:step_id/reject",
+            post(handlers::reject_step_handler),
+        );
+    protected_routes = protected_routes.merge(approval_routes);
 
     if metrics_public {
         public_routes = public_routes.route("/metrics", get(handlers::metrics_handler));
@@ -88,6 +105,14 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         protected_routes = protected_routes.layer(middleware::from_fn_with_state(
             auth_config.clone(),
             crate::auth::auth_middleware,
+        ));
+    }
+
+    // V0.3.2: 租户限流（auth 之后）
+    if state.config.rate_limit.enabled {
+        protected_routes = protected_routes.layer(middleware::from_fn_with_state(
+            state.clone(),
+            crate::ratelimit::rate_limit_middleware,
         ));
     }
 

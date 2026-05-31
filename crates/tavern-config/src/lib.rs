@@ -19,6 +19,9 @@ pub struct TavernConfig {
     pub runtime: RuntimeConfig,
     #[serde(default = "default_reload")]
     pub reload: ReloadConfig,
+    /// V0.3.2: 租户限流配置
+    #[serde(default)]
+    pub rate_limit: RateLimitConfig,
 }
 
 impl TavernConfig {
@@ -79,6 +82,7 @@ impl Default for TavernConfig {
             observability: default_observability(),
             runtime: default_runtime(),
             reload: default_reload(),
+            rate_limit: RateLimitConfig::default(),
         }
     }
 }
@@ -135,6 +139,37 @@ pub struct ReloadConfig {
     pub enabled: bool,
     #[serde(default = "default_reload_debounce_ms")]
     pub debounce_ms: u64,
+}
+
+// ── V0.3.2: 租户限流配置 ──
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct RateLimitConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default = "default_rps")]
+    pub default_rps: u32,
+    #[serde(default)]
+    pub per_tenant: std::collections::HashMap<String, TenantRateLimit>,
+}
+
+impl Default for RateLimitConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            default_rps: default_rps(),
+            per_tenant: std::collections::HashMap::new(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct TenantRateLimit {
+    pub rps: u32,
+}
+
+fn default_rps() -> u32 {
+    10
 }
 
 // ── 默认值辅助函数 ──

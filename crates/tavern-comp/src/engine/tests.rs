@@ -57,6 +57,7 @@ fn simple_workflow() -> Workflow {
             wait_for_signal: None,
             signal_timeout: None,
             expected_output: None,
+            signal_timeout_action: None,
         }],
         inputs: vec![InputDef {
             name: "input".to_string(),
@@ -215,6 +216,7 @@ async fn test_run_pipeline() {
                 wait_for_signal: None,
                 signal_timeout: None,
                 expected_output: None,
+            signal_timeout_action: None,
             },
             Step {
                 id: "write".to_string(),
@@ -228,6 +230,7 @@ async fn test_run_pipeline() {
                 wait_for_signal: None,
                 signal_timeout: None,
                 expected_output: None,
+            signal_timeout_action: None,
             },
             Step {
                 id: "edit".to_string(),
@@ -241,6 +244,7 @@ async fn test_run_pipeline() {
                 wait_for_signal: None,
                 signal_timeout: None,
                 expected_output: None,
+            signal_timeout_action: None,
             },
         ],
         inputs: vec![InputDef {
@@ -421,6 +425,7 @@ instructions: test
                 wait_for_signal: None,
                 signal_timeout: None,
                 expected_output: None,
+            signal_timeout_action: None,
             },
             Step {
                 id: "b".to_string(),
@@ -434,6 +439,7 @@ instructions: test
                 wait_for_signal: None,
                 signal_timeout: None,
                 expected_output: None,
+            signal_timeout_action: None,
             },
         ],
         inputs: vec![],
@@ -526,6 +532,7 @@ instructions: test
                 wait_for_signal: None,
                 signal_timeout: None,
                 expected_output: None,
+            signal_timeout_action: None,
             },
             Step {
                 id: "b".to_string(),
@@ -539,6 +546,7 @@ instructions: test
                 wait_for_signal: None,
                 signal_timeout: None,
                 expected_output: None,
+            signal_timeout_action: None,
             },
             Step {
                 id: "c".to_string(),
@@ -552,6 +560,7 @@ instructions: test
                 wait_for_signal: None,
                 signal_timeout: None,
                 expected_output: None,
+            signal_timeout_action: None,
             },
         ],
         inputs: vec![],
@@ -651,6 +660,7 @@ instructions: test
                 wait_for_signal: None,
                 signal_timeout: None,
                 expected_output: None,
+            signal_timeout_action: None,
             },
             Step {
                 id: "fast".to_string(),
@@ -664,6 +674,7 @@ instructions: test
                 wait_for_signal: None,
                 signal_timeout: None,
                 expected_output: None,
+            signal_timeout_action: None,
             },
         ],
         inputs: vec![],
@@ -749,6 +760,7 @@ fn hierarchical_workflow() -> Workflow {
                 wait_for_signal: None,
                 signal_timeout: None,
                 expected_output: None,
+            signal_timeout_action: None,
             },
             Step {
                 id: "s2".to_string(),
@@ -762,6 +774,7 @@ fn hierarchical_workflow() -> Workflow {
                 wait_for_signal: None,
                 signal_timeout: None,
                 expected_output: None,
+            signal_timeout_action: None,
             },
         ],
         inputs: vec![],
@@ -1337,6 +1350,7 @@ fn signal_workflow() -> Workflow {
             wait_for_signal: Some("approve".to_string()),
             signal_timeout: None,
             expected_output: None,
+            signal_timeout_action: None,
         }],
     }
 }

@@ -2,6 +2,14 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+/// V0.3.2: 审批动作类型，用于 SignalReceived 事件。
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SignalAction {
+    Approve,
+    Reject,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum WorkflowEvent {
@@ -49,6 +57,12 @@ pub enum WorkflowEvent {
         signal_name: String,
         payload: Value,
         received_at: DateTime<Utc>,
+        /// V0.3.2: 审批动作（向后兼容：旧事件反序列化为 None）
+        #[serde(default)]
+        action: Option<SignalAction>,
+        /// V0.3.2: 审批人标识
+        #[serde(default)]
+        reviewer: Option<String>,
     },
 
     // ── 定时器 ──

@@ -5,10 +5,10 @@ use axum::{
     Json,
 };
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{json, Value};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
-use tavern_comp::CompError;
+use tavern_comp::{CompError, SignalAction};
 use tavern_core::RuntimeError;
 use tavern_hero::TavernError;
 
@@ -513,6 +513,8 @@ pub async fn signal_execution_handler(
                     signal_name: req.signal_name,
                     payload: req.payload,
                     received_at: Utc::now(),
+                    action: None,
+                    reviewer: None,
                 })
                 .await
                 .map_err(|_| CompError::InstanceClosed { id: id.clone() });
@@ -783,6 +785,325 @@ pub async fn refresh_token_handler(
         token,
         expires_in: 86400,
     }))
+}
+
+// ── V0.3.2: 克隆 handler ──
+
+#[derive(Serialize)]
+pub struct CloneExecutionResponse {
+    pub execution_id: String,
+    pub cloned_from: String,
+    pub workflow_id: String,
+    pub inputs: Value,
+}
+
+pub async fn clone_execution_handler(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+) -> Result<impl IntoResponse, (StatusCode, ApiError)> {
+    let engine = tavern_comp::WorkflowEngine::new(state.hero.clone())
+        .with_max_concurrency(state.max_concurrency)
+        .with_store(state.event_store.clone());
+
+    let info = engine
+        .get_execution_info(&id)
+        .await
+        .map_err(|e| map_comp_error(e))?;
+
+    // 仅允许克隆已完成或已失败的执行
+    match &info.status {
+        tavern_comp::InstanceStatus::Completed | tavern_comp::InstanceStatus::Failed => {}
+        _ => {
+            return Err((
+                StatusCode::CONFLICT,
+                ApiError::new(
+                    StatusCode::CONFLICT,
+                    "CannotClone",
+                    "cannot clone a running or waiting execution".to_string(),
+                ),
+            ));
+        }
+    }
+
+    let workflow = {
+        let registry = state.registry.read().await;
+        match registry.get(&info.workflow_id) {
+            Some(w) => w.clone(),
+            None => {
+                return Err(map_comp_error(CompError::WorkflowNotFound {
+                    id: info.workflow_id,
+                }))
+            }
+        }
+    };
+
+    let mut handle = engine
+        .start(&workflow, info.inputs.clone())
+        .await
+        .map_err(|e| map_comp_error(e))?;
+
+    let new_id = handle.id().to_string();
+    let signal_tx = handle.signal_tx.clone();
+
+    // Register the new execution
+    {
+        let mut handles = state.execution_handles.write().await;
+        handles.insert(new_id.clone(), signal_tx);
+    }
+    {
+        let mut broadcasts = state.event_broadcasts.write().await;
+        broadcasts.entry(new_id.clone()).or_insert_with(|| {
+            tokio::sync::broadcast::channel::<tavern_comp::WorkflowEvent>(128).0
+        });
+    }
+
+    // Spawn cleanup
+    let cleanup_id = new_id.clone();
+    let handles_arc = state.execution_handles.clone();
+    let broadcasts_arc = state.event_broadcasts.clone();
+    tokio::spawn(async move {
+        let _ = handle.await_completion().await;
+        handles_arc.write().await.remove(&cleanup_id);
+        broadcasts_arc.write().await.remove(&cleanup_id);
+    });
+
+    Ok((
+        StatusCode::ACCEPTED,
+        Json(CloneExecutionResponse {
+            execution_id: new_id,
+            cloned_from: id,
+            workflow_id: info.workflow_id,
+            inputs: info.inputs,
+        }),
+    ))
+}
+
+// ── V0.3.2: 审批 handlers ──
+
+#[derive(Serialize)]
+pub struct ApprovalItem {
+    pub execution_id: String,
+    pub workflow_id: String,
+    pub step_id: String,
+    pub signal_name: String,
+    pub context: Value,
+    pub step_output: Value,
+    pub waited_since: Option<String>,
+    pub timeout_at: Option<String>,
+}
+
+#[derive(Serialize)]
+pub struct ApprovalListResponse {
+    pub approvals: Vec<ApprovalItem>,
+}
+
+pub async fn list_approvals_handler(
+    State(state): State<Arc<AppState>>,
+) -> Result<impl IntoResponse, (StatusCode, ApiError)> {
+    let statuses = state
+        .event_store
+        .list_by_status(tavern_comp::InstanceStatus::WaitingForSignal {
+            signal: String::new(),
+        })
+        .await
+        .map_err(|e| map_comp_error(e))?;
+
+    let mut approvals = Vec::new();
+    for instance_id in statuses {
+        let events = state
+            .event_store
+            .read_stream(&instance_id)
+            .await
+            .map_err(|e| map_comp_error(e))?;
+
+        let mut workflow_id = String::new();
+        let mut context = Value::Null;
+        let mut step_id = String::new();
+        let mut signal_name = String::new();
+        let mut waited_since: Option<String> = None;
+        let mut step_output = Value::Null;
+
+        let mut instance_state = tavern_comp::InstanceState {
+            id: instance_id.clone(),
+            ..Default::default()
+        };
+
+        for event in &events {
+            let _ = instance_state.apply(event);
+            match event {
+                tavern_comp::WorkflowEvent::InstanceCreated {
+                    workflow_id: wid,
+                    inputs: inp,
+                } => {
+                    workflow_id = wid.clone();
+                    context = inp.clone();
+                }
+                tavern_comp::WorkflowEvent::SignalWaitStarted {
+                    step_id: sid,
+                    signal_name: sn,
+                } => {
+                    step_id = sid.clone();
+                    signal_name = sn.clone();
+                }
+                tavern_comp::WorkflowEvent::StepCompleted {
+                    step_id: sid,
+                    output,
+                    ..
+                } if *sid == step_id => {
+                    step_output = output.clone();
+                }
+                tavern_comp::WorkflowEvent::StepStarted {
+                    step_id: sid,
+                    started_at,
+                } if *sid == step_id => {
+                    waited_since = Some(started_at.to_rfc3339());
+                }
+                _ => {}
+            }
+        }
+
+        // Merge step outputs into context
+        if let Some(obj) = context.as_object_mut() {
+            for (key, val) in instance_state.context.as_object().unwrap_or(&serde_json::Map::new())
+            {
+                if key != "signals" {
+                    obj.insert(key.clone(), val.clone());
+                }
+            }
+        }
+
+        approvals.push(ApprovalItem {
+            execution_id: instance_id,
+            workflow_id,
+            step_id,
+            signal_name,
+            context,
+            step_output,
+            waited_since,
+            timeout_at: None,
+        });
+    }
+
+    Ok(Json(ApprovalListResponse { approvals }))
+}
+
+#[derive(Deserialize)]
+pub struct ApproveRequest {
+    pub comment: Option<String>,
+    pub reviewer: String,
+}
+
+#[derive(Deserialize)]
+pub struct RejectRequest {
+    pub reason: String,
+    pub reviewer: String,
+}
+
+pub async fn approve_step_handler(
+    State(state): State<Arc<AppState>>,
+    Path((execution_id, step_id)): Path<(String, String)>,
+    Json(body): Json<ApproveRequest>,
+) -> Result<impl IntoResponse, (StatusCode, ApiError)> {
+    let payload = json!({"comment": body.comment});
+    send_approval_signal(
+        state,
+        execution_id,
+        step_id,
+        SignalAction::Approve,
+        body.reviewer,
+        payload,
+    )
+    .await
+}
+
+pub async fn reject_step_handler(
+    State(state): State<Arc<AppState>>,
+    Path((execution_id, step_id)): Path<(String, String)>,
+    Json(body): Json<RejectRequest>,
+) -> Result<impl IntoResponse, (StatusCode, ApiError)> {
+    let payload = json!({"reason": body.reason});
+    send_approval_signal(
+        state,
+        execution_id,
+        step_id,
+        SignalAction::Reject,
+        body.reviewer,
+        payload,
+    )
+    .await
+}
+
+async fn send_approval_signal(
+    state: Arc<AppState>,
+    execution_id: String,
+    step_id: String,
+    action: SignalAction,
+    reviewer: String,
+    payload: Value,
+) -> Result<impl IntoResponse, (StatusCode, ApiError)> {
+    // 从待审批步骤中查找 signal_name
+    let events = state
+        .event_store
+        .read_stream(&execution_id)
+        .await
+        .map_err(|e| map_comp_error(e))?;
+
+    if events.is_empty() {
+        return Err(map_comp_error(CompError::InstanceNotFound {
+            id: execution_id.clone(),
+        }));
+    }
+
+    let signal_name = events
+        .iter()
+        .find_map(|e| match e {
+            tavern_comp::WorkflowEvent::SignalWaitStarted {
+                step_id: sid,
+                signal_name: sn,
+            } if *sid == step_id => Some(sn.clone()),
+            _ => None,
+        })
+        .ok_or_else(|| {
+            (
+                StatusCode::CONFLICT,
+                ApiError::new(
+                    StatusCode::CONFLICT,
+                    "StepNotWaiting",
+                    format!("step '{}' is not waiting for approval", step_id),
+                ),
+            )
+        })?;
+
+    let event = tavern_comp::WorkflowEvent::SignalReceived {
+        signal_name,
+        payload,
+        received_at: Utc::now(),
+        action: Some(action),
+        reviewer: Some(reviewer),
+    };
+
+    // 尝试通过 execution_handles 发送（活跃实例）
+    {
+        let handles = state.execution_handles.read().await;
+        if let Some(signal_tx) = handles.get(&execution_id) {
+            signal_tx
+                .send(event.clone())
+                .await
+                .map_err(|_| map_comp_error(CompError::InstanceClosed {
+                    id: execution_id.clone(),
+                }))?;
+            return Ok(StatusCode::ACCEPTED);
+        }
+    }
+
+    // Fallback：实例可能已从 checkpoint 恢复，直接 append 到 EventStore
+    state
+        .event_store
+        .append(&execution_id, event)
+        .await
+        .map_err(|e| map_comp_error(e))?;
+
+    Ok(StatusCode::ACCEPTED)
 }
 
 // ── Flow handlers ──

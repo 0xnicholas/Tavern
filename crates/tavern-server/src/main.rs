@@ -8,7 +8,7 @@ use tavern_core::Runtime;
 use tavern_hero::TavernHero;
 use tracing::info;
 
-use tavern_server::{router, shutdown, state};
+use tavern_server::{ratelimit::RateLimiter, router, shutdown, state};
 
 type ExecutionHandles = Arc<
     tokio::sync::RwLock<
@@ -132,6 +132,11 @@ async fn main() {
         event_broadcasts: event_broadcasts.clone(),
         flow_registry: Arc::new(tavern_flow::FlowRegistry::new()),
         flow_handles: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
+        rate_limiter: RateLimiter::new(
+            config.rate_limit.enabled,
+            config.rate_limit.default_rps,
+            config.rate_limit.per_tenant.iter().map(|(k, v)| (k.clone(), v.rps)).collect(),
+        ),
         config: config.clone(),
     });
 
@@ -447,6 +452,7 @@ mod tests {
     use tavern_adapters::MockRuntime;
     use tavern_core::Runtime;
     use tavern_hero::TavernHero;
+    use tavern_server::ratelimit::RateLimiter;
 
     use tavern_server::router;
     use tavern_server::state::AppState;
@@ -469,6 +475,7 @@ mod tests {
                     wait_for_signal: None,
                     signal_timeout: None,
                     expected_output: None,
+            signal_timeout_action: None,
                 },
                 tavern_comp::Step {
                     id: "write".to_string(),
@@ -482,6 +489,7 @@ mod tests {
                     wait_for_signal: None,
                     signal_timeout: None,
                     expected_output: None,
+            signal_timeout_action: None,
                 },
                 tavern_comp::Step {
                     id: "edit".to_string(),
@@ -495,6 +503,7 @@ mod tests {
                     wait_for_signal: None,
                     signal_timeout: None,
                     expected_output: None,
+            signal_timeout_action: None,
                 },
             ],
             inputs: vec![tavern_comp::InputDef {
@@ -777,6 +786,7 @@ instructions: 研究
             event_broadcasts: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
             flow_registry: Arc::new(tavern_flow::FlowRegistry::new()),
             flow_handles: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
+            rate_limiter: RateLimiter::new(false, 10, std::collections::HashMap::new()),
             config: tavern_config::TavernConfig::default(),
         }))
     }
@@ -799,6 +809,7 @@ instructions: 研究
                 wait_for_signal: None,
                 signal_timeout: None,
                 expected_output: None,
+            signal_timeout_action: None,
             }],
             inputs: vec![],
             outputs: vec![],
@@ -838,6 +849,7 @@ instructions: 研究
                 wait_for_signal: None,
                 signal_timeout: None,
                 expected_output: None,
+            signal_timeout_action: None,
             }],
             inputs: vec![],
             outputs: vec![],
@@ -1148,6 +1160,7 @@ instructions: 研究
                 wait_for_signal: Some("approve".to_string()),
                 signal_timeout: None,
                 expected_output: None,
+            signal_timeout_action: None,
             }],
             inputs: vec![],
             outputs: vec![],
@@ -1303,6 +1316,7 @@ instructions: 研究
             event_broadcasts: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
             flow_registry: Arc::new(tavern_flow::FlowRegistry::new()),
             flow_handles: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
+            rate_limiter: RateLimiter::new(false, 10, std::collections::HashMap::new()),
             config: tavern_config::TavernConfig::default(),
         }));
 

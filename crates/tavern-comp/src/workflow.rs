@@ -9,6 +9,14 @@ use crate::error::CompError;
 
 pub use tavern_core::{is_valid_id, ManagerConfig, Plan, PlanningConfig, Process};
 
+/// V0.3.2: 审批超时默认动作。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum SignalTimeoutAction {
+    Fail,
+    Reject,
+}
+
 /// 工作流的完整配置定义。
 ///
 /// 自定义反序列化以支持 `process: hierarchical` + `manager:` YAML 双 key 语法。
@@ -354,6 +362,10 @@ pub struct Step {
     /// 默认：null（无超时，永久等待）
     #[serde(default)]
     pub signal_timeout: Option<u64>,
+
+    /// V0.3.2: 审批超时后默认动作。fail（默认）或 reject。
+    #[serde(default)]
+    pub signal_timeout_action: Option<SignalTimeoutAction>,
 
     /// 可选的预期输出描述，帮助 LLM 理解任务目标。
     /// 在 Manager prompt 和 Planning Context 注入时使用。

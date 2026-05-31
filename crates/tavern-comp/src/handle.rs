@@ -28,6 +28,8 @@ impl ExecutionHandle {
                 signal_name: name.to_string(),
                 payload,
                 received_at: Utc::now(),
+                action: None,
+                reviewer: None,
             })
             .await
             .map_err(|_| CompError::InstanceClosed {

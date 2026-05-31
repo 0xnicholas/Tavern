@@ -106,6 +106,7 @@ mod tests {
             wait_for_signal: None,
             signal_timeout: None,
             expected_output: None,
+            signal_timeout_action: None,
         }
     }
 
