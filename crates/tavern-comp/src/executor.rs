@@ -47,10 +47,10 @@ impl StepExecutor {
             }
 
             let model = step
-            .model_override
-            .as_ref()
-            .map(|m| format!("{}/{}", m.provider, m.name));
-        let result = Self::execute_once(&step, &context, &hero, model.as_deref()).await;
+                .model_override
+                .as_ref()
+                .map(|m| format!("{}/{}", m.provider, m.name));
+            let result = Self::execute_once(&step, &context, &hero, model.as_deref(), &tx).await;
 
             let event = match result {
                 Ok(output) => WorkflowEvent::StepCompleted {
@@ -78,6 +78,7 @@ impl StepExecutor {
         context: &Value,
         hero: &tavern_hero::TavernHero,
         model_override: Option<&str>,
+        tx: &mpsc::Sender<WorkflowEvent>,
     ) -> Result<Value, String> {
         let task = match render_template(&step.task, context) {
             Ok(t) => t,
@@ -85,17 +86,65 @@ impl StepExecutor {
         };
 
         let timeout = step.timeout.unwrap_or(300);
+        let model = model_override.unwrap_or(&step.agent_id).to_string();
 
-        let fut: std::pin::Pin<Box<dyn std::future::Future<Output = Result<Value, tavern_hero::TavernError>> + Send>> =
-            if let Some(model) = model_override {
-                Box::pin(hero.execute_with_model(&step.agent_id, &task, Some(context.clone()), model))
-            } else {
-                Box::pin(hero.execute(&step.agent_id, &task, Some(context.clone())))
-            };
+        // Emit LLMCallStarted
+        let llm_started = WorkflowEvent::LLMCallStarted {
+            step_id: step.id.clone(),
+            model: model.clone(),
+            prompt_tokens: None,
+            started_at: Utc::now(),
+        };
+        if let Err(e) = tx.send(llm_started).await {
+            tracing::warn!(error = %e, "LLMCallStarted event dropped");
+        }
+
+        let fut: std::pin::Pin<
+            Box<dyn std::future::Future<Output = Result<Value, tavern_hero::TavernError>> + Send>,
+        > = if let Some(model) = model_override {
+            Box::pin(hero.execute_with_model(&step.agent_id, &task, Some(context.clone()), model))
+        } else {
+            Box::pin(hero.execute(&step.agent_id, &task, Some(context.clone())))
+        };
         match tokio::time::timeout(Duration::from_secs(timeout), fut).await {
-            Ok(Ok(output)) => Ok(output),
-            Ok(Err(e)) => Err(e.to_string()),
-            Err(_) => Err(format!("step timed out after {}s", timeout)),
+            Ok(Ok(output)) => {
+                // Emit LLMCallCompleted
+                let llm_completed = WorkflowEvent::LLMCallCompleted {
+                    step_id: step.id.clone(),
+                    output: output.clone(),
+                    usage: None,
+                    completed_at: Utc::now(),
+                };
+                if let Err(e) = tx.send(llm_completed).await {
+                    tracing::warn!(error = %e, "LLMCallCompleted event dropped");
+                }
+                Ok(output)
+            }
+            Ok(Err(e)) => {
+                // Emit LLMCallFailed
+                let llm_failed = WorkflowEvent::LLMCallFailed {
+                    step_id: step.id.clone(),
+                    error: e.to_string(),
+                    failed_at: Utc::now(),
+                };
+                if let Err(e) = tx.send(llm_failed).await {
+                    tracing::warn!(error = %e, "LLMCallFailed event dropped");
+                }
+                Err(e.to_string())
+            }
+            Err(_) => {
+                let err = format!("step timed out after {}s", timeout);
+                // Emit LLMCallFailed (timeout)
+                let llm_failed = WorkflowEvent::LLMCallFailed {
+                    step_id: step.id.clone(),
+                    error: err.clone(),
+                    failed_at: Utc::now(),
+                };
+                if let Err(e) = tx.send(llm_failed).await {
+                    tracing::warn!(error = %e, "LLMCallFailed(timeout) event dropped");
+                }
+                Err(err)
+            }
         }
     }
 }

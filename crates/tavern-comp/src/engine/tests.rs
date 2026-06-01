@@ -72,9 +72,9 @@ fn simple_workflow() -> Workflow {
         }],
         process: Process::Sequential,
         planning: None,
-            webhook: None,
-            schedule: None,
-            schedule_inputs: serde_json::Value::Null,
+        webhook: None,
+        schedule: None,
+        schedule_inputs: serde_json::Value::Null,
     }
 }
 
@@ -221,9 +221,9 @@ async fn test_run_pipeline() {
                 wait_for_signal: None,
                 signal_timeout: None,
                 expected_output: None,
-            signal_timeout_action: None,
-            breakpoint: false,
-            model_override: None,
+                signal_timeout_action: None,
+                breakpoint: false,
+                model_override: None,
             },
             Step {
                 id: "write".to_string(),
@@ -237,9 +237,9 @@ async fn test_run_pipeline() {
                 wait_for_signal: None,
                 signal_timeout: None,
                 expected_output: None,
-            signal_timeout_action: None,
-            breakpoint: false,
-            model_override: None,
+                signal_timeout_action: None,
+                breakpoint: false,
+                model_override: None,
             },
             Step {
                 id: "edit".to_string(),
@@ -253,9 +253,9 @@ async fn test_run_pipeline() {
                 wait_for_signal: None,
                 signal_timeout: None,
                 expected_output: None,
-            signal_timeout_action: None,
-            breakpoint: false,
-            model_override: None,
+                signal_timeout_action: None,
+                breakpoint: false,
+                model_override: None,
             },
         ],
         inputs: vec![InputDef {
@@ -269,9 +269,9 @@ async fn test_run_pipeline() {
         }],
         process: Process::Sequential,
         planning: None,
-            webhook: None,
-            schedule: None,
-            schedule_inputs: serde_json::Value::Null,
+        webhook: None,
+        schedule: None,
+        schedule_inputs: serde_json::Value::Null,
     };
 
     let result = engine.run(&wf, json!({"topic": "AI"})).await.unwrap();
@@ -439,9 +439,9 @@ instructions: test
                 wait_for_signal: None,
                 signal_timeout: None,
                 expected_output: None,
-            signal_timeout_action: None,
-            breakpoint: false,
-            model_override: None,
+                signal_timeout_action: None,
+                breakpoint: false,
+                model_override: None,
             },
             Step {
                 id: "b".to_string(),
@@ -455,18 +455,18 @@ instructions: test
                 wait_for_signal: None,
                 signal_timeout: None,
                 expected_output: None,
-            signal_timeout_action: None,
-            breakpoint: false,
-            model_override: None,
+                signal_timeout_action: None,
+                breakpoint: false,
+                model_override: None,
             },
         ],
         inputs: vec![],
         outputs: vec![],
         process: Process::Sequential,
         planning: None,
-            webhook: None,
-            schedule: None,
-            schedule_inputs: serde_json::Value::Null,
+        webhook: None,
+        schedule: None,
+        schedule_inputs: serde_json::Value::Null,
     };
 
     let start = Instant::now();
@@ -553,9 +553,9 @@ instructions: test
                 wait_for_signal: None,
                 signal_timeout: None,
                 expected_output: None,
-            signal_timeout_action: None,
-            breakpoint: false,
-            model_override: None,
+                signal_timeout_action: None,
+                breakpoint: false,
+                model_override: None,
             },
             Step {
                 id: "b".to_string(),
@@ -569,9 +569,9 @@ instructions: test
                 wait_for_signal: None,
                 signal_timeout: None,
                 expected_output: None,
-            signal_timeout_action: None,
-            breakpoint: false,
-            model_override: None,
+                signal_timeout_action: None,
+                breakpoint: false,
+                model_override: None,
             },
             Step {
                 id: "c".to_string(),
@@ -585,18 +585,18 @@ instructions: test
                 wait_for_signal: None,
                 signal_timeout: None,
                 expected_output: None,
-            signal_timeout_action: None,
-            breakpoint: false,
-            model_override: None,
+                signal_timeout_action: None,
+                breakpoint: false,
+                model_override: None,
             },
         ],
         inputs: vec![],
         outputs: vec![],
         process: Process::Sequential,
         planning: None,
-            webhook: None,
-            schedule: None,
-            schedule_inputs: serde_json::Value::Null,
+        webhook: None,
+        schedule: None,
+        schedule_inputs: serde_json::Value::Null,
     };
 
     let start = Instant::now();
@@ -690,9 +690,9 @@ instructions: test
                 wait_for_signal: None,
                 signal_timeout: None,
                 expected_output: None,
-            signal_timeout_action: None,
-            breakpoint: false,
-            model_override: None,
+                signal_timeout_action: None,
+                breakpoint: false,
+                model_override: None,
             },
             Step {
                 id: "fast".to_string(),
@@ -706,18 +706,18 @@ instructions: test
                 wait_for_signal: None,
                 signal_timeout: None,
                 expected_output: None,
-            signal_timeout_action: None,
-            breakpoint: false,
-            model_override: None,
+                signal_timeout_action: None,
+                breakpoint: false,
+                model_override: None,
             },
         ],
         inputs: vec![],
         outputs: vec![],
         process: Process::Sequential,
         planning: None,
-            webhook: None,
-            schedule: None,
-            schedule_inputs: serde_json::Value::Null,
+        webhook: None,
+        schedule: None,
+        schedule_inputs: serde_json::Value::Null,
     };
 
     let start = Instant::now();
@@ -797,9 +797,9 @@ fn hierarchical_workflow() -> Workflow {
                 wait_for_signal: None,
                 signal_timeout: None,
                 expected_output: None,
-            signal_timeout_action: None,
-            breakpoint: false,
-            model_override: None,
+                signal_timeout_action: None,
+                breakpoint: false,
+                model_override: None,
             },
             Step {
                 id: "s2".to_string(),
@@ -813,9 +813,9 @@ fn hierarchical_workflow() -> Workflow {
                 wait_for_signal: None,
                 signal_timeout: None,
                 expected_output: None,
-            signal_timeout_action: None,
-            breakpoint: false,
-            model_override: None,
+                signal_timeout_action: None,
+                breakpoint: false,
+                model_override: None,
             },
         ],
         inputs: vec![],
@@ -825,9 +825,9 @@ fn hierarchical_workflow() -> Workflow {
             instructions: None,
         }),
         planning: None,
-            webhook: None,
-            schedule: None,
-            schedule_inputs: serde_json::Value::Null,
+        webhook: None,
+        schedule: None,
+        schedule_inputs: serde_json::Value::Null,
     }
 }
 
@@ -1022,6 +1022,12 @@ async fn test_hierarchical_event_stream_matches_sequential() {
             WorkflowEvent::WorkflowCompleted { .. } => "WorkflowCompleted",
             WorkflowEvent::WorkflowFailed { .. } => "WorkflowFailed",
             WorkflowEvent::BreakpointHit { .. } => "BreakpointHit",
+            WorkflowEvent::LLMCallStarted { .. } => "LLMCallStarted",
+            WorkflowEvent::LLMCallCompleted { .. } => "LLMCallCompleted",
+            WorkflowEvent::LLMCallFailed { .. } => "LLMCallFailed",
+            WorkflowEvent::ToolCallStarted { .. } => "ToolCallStarted",
+            WorkflowEvent::ToolCallCompleted { .. } => "ToolCallCompleted",
+            WorkflowEvent::ToolCallFailed { .. } => "ToolCallFailed",
             WorkflowEvent::External { .. } => "External",
         })
         .collect();
@@ -1074,8 +1080,8 @@ async fn test_planning_injects_context_into_task() {
 
 #[tokio::test]
 async fn test_planning_disabled_skips_planner() {
-    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
     let call_count = Arc::new(AtomicUsize::new(0));
     let cc = call_count.clone();
 
@@ -1236,8 +1242,8 @@ async fn test_start_and_await_completion_equivalent_to_run() {
 
 #[tokio::test]
 async fn test_signal_wait_and_resume() {
-    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::time::Duration;
 
     let call_count = Arc::new(AtomicUsize::new(0));
@@ -1381,9 +1387,9 @@ fn signal_workflow() -> Workflow {
         description: None,
         process: Process::Sequential,
         planning: None,
-            webhook: None,
-            schedule: None,
-            schedule_inputs: serde_json::Value::Null,
+        webhook: None,
+        schedule: None,
+        schedule_inputs: serde_json::Value::Null,
         inputs: vec![],
         outputs: vec![],
         steps: vec![Step {

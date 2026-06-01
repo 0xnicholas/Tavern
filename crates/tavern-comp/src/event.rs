@@ -81,6 +81,45 @@ pub enum WorkflowEvent {
         requested_at: DateTime<Utc>,
     },
 
+    // ── LLM 调用 ──
+    LLMCallStarted {
+        step_id: String,
+        model: String,
+        prompt_tokens: Option<u32>,
+        started_at: DateTime<Utc>,
+    },
+    LLMCallCompleted {
+        step_id: String,
+        output: Value,
+        usage: Option<Value>,
+        completed_at: DateTime<Utc>,
+    },
+    LLMCallFailed {
+        step_id: String,
+        error: String,
+        failed_at: DateTime<Utc>,
+    },
+
+    // ── 工具调用 ──
+    ToolCallStarted {
+        step_id: String,
+        tool_name: String,
+        args: Value,
+        started_at: DateTime<Utc>,
+    },
+    ToolCallCompleted {
+        step_id: String,
+        tool_name: String,
+        output: Value,
+        completed_at: DateTime<Utc>,
+    },
+    ToolCallFailed {
+        step_id: String,
+        tool_name: String,
+        error: String,
+        failed_at: DateTime<Utc>,
+    },
+
     // ── 完成 ──
     WorkflowCompleted {
         outputs: Value,

@@ -155,6 +155,12 @@ pub fn event_timestamp(event: &WorkflowEvent) -> DateTime<Utc> {
         WorkflowEvent::SignalReceived { received_at, .. } => *received_at,
         WorkflowEvent::TimerFired { .. } => Utc::now(),
         WorkflowEvent::CancelRequested { requested_at } => *requested_at,
+        WorkflowEvent::LLMCallStarted { started_at, .. } => *started_at,
+        WorkflowEvent::LLMCallCompleted { completed_at, .. } => *completed_at,
+        WorkflowEvent::LLMCallFailed { failed_at, .. } => *failed_at,
+        WorkflowEvent::ToolCallStarted { started_at, .. } => *started_at,
+        WorkflowEvent::ToolCallCompleted { completed_at, .. } => *completed_at,
+        WorkflowEvent::ToolCallFailed { failed_at, .. } => *failed_at,
         WorkflowEvent::WorkflowCompleted { completed_at, .. } => *completed_at,
         WorkflowEvent::WorkflowFailed { failed_at, .. } => *failed_at,
         WorkflowEvent::External { .. } => Utc::now(),
@@ -352,6 +358,12 @@ fn event_type_name(event: &WorkflowEvent) -> String {
         WorkflowEvent::SignalReceived { .. } => "SignalReceived",
         WorkflowEvent::TimerFired { .. } => "TimerFired",
         WorkflowEvent::CancelRequested { .. } => "CancelRequested",
+        WorkflowEvent::LLMCallStarted { .. } => "LLMCallStarted",
+        WorkflowEvent::LLMCallCompleted { .. } => "LLMCallCompleted",
+        WorkflowEvent::LLMCallFailed { .. } => "LLMCallFailed",
+        WorkflowEvent::ToolCallStarted { .. } => "ToolCallStarted",
+        WorkflowEvent::ToolCallCompleted { .. } => "ToolCallCompleted",
+        WorkflowEvent::ToolCallFailed { .. } => "ToolCallFailed",
         WorkflowEvent::WorkflowCompleted { .. } => "WorkflowCompleted",
         WorkflowEvent::WorkflowFailed { .. } => "WorkflowFailed",
         WorkflowEvent::External { .. } => "External",
@@ -366,7 +378,13 @@ fn event_step_id(event: &WorkflowEvent) -> Option<&str> {
         | WorkflowEvent::StepCompleted { step_id, .. }
         | WorkflowEvent::StepFailed { step_id, .. }
         | WorkflowEvent::StepRetryScheduled { step_id, .. }
-        | WorkflowEvent::SignalWaitStarted { step_id, .. } => Some(step_id),
+        | WorkflowEvent::SignalWaitStarted { step_id, .. }
+        | WorkflowEvent::LLMCallStarted { step_id, .. }
+        | WorkflowEvent::LLMCallCompleted { step_id, .. }
+        | WorkflowEvent::LLMCallFailed { step_id, .. }
+        | WorkflowEvent::ToolCallStarted { step_id, .. }
+        | WorkflowEvent::ToolCallCompleted { step_id, .. }
+        | WorkflowEvent::ToolCallFailed { step_id, .. } => Some(step_id),
         _ => None,
     }
 }
@@ -476,9 +494,9 @@ mod tests {
                     wait_for_signal: None,
                     signal_timeout: None,
                     expected_output: None,
-            signal_timeout_action: None,
-            breakpoint: false,
-            model_override: None,
+                    signal_timeout_action: None,
+                    breakpoint: false,
+                    model_override: None,
                 },
                 Step {
                     id: "write".to_string(),
@@ -492,9 +510,9 @@ mod tests {
                     wait_for_signal: None,
                     signal_timeout: None,
                     expected_output: None,
-            signal_timeout_action: None,
-            breakpoint: false,
-            model_override: None,
+                    signal_timeout_action: None,
+                    breakpoint: false,
+                    model_override: None,
                 },
             ],
             inputs: vec![],
@@ -733,9 +751,10 @@ mod tests {
             .expect("research completed");
         let diff = completed.state_diff.as_ref().expect("has diff");
         assert!(diff.context_changed);
-        assert!(diff
-            .context_keys_added
-            .contains(&"research_notes".to_string()));
+        assert!(
+            diff.context_keys_added
+                .contains(&"research_notes".to_string())
+        );
         assert_eq!(diff.step_status_before, Some("Running".to_string()));
         assert_eq!(diff.step_status_after, Some("Completed".to_string()));
     }

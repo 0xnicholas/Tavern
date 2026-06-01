@@ -179,9 +179,27 @@ impl InstanceState {
                 if matches!(action, Some(SignalAction::Reject)) {
                     let reason = reviewer
                         .as_deref()
-                        .map(|r| format!("rejected by {}: {}", r, payload.get("reason").and_then(|v| v.as_str()).unwrap_or("no reason")))
-                        .unwrap_or_else(|| format!("rejected: {}", payload.get("reason").and_then(|v| v.as_str()).unwrap_or("no reason")));
-                    let blocked_step_ids: Vec<String> = self.signal_blocked_steps.iter().cloned().collect();
+                        .map(|r| {
+                            format!(
+                                "rejected by {}: {}",
+                                r,
+                                payload
+                                    .get("reason")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("no reason")
+                            )
+                        })
+                        .unwrap_or_else(|| {
+                            format!(
+                                "rejected: {}",
+                                payload
+                                    .get("reason")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("no reason")
+                            )
+                        });
+                    let blocked_step_ids: Vec<String> =
+                        self.signal_blocked_steps.iter().cloned().collect();
                     self.signal_blocked_steps.clear();
                     self.status = InstanceStatus::Failed;
                     for step_id in blocked_step_ids {
@@ -240,8 +258,14 @@ impl InstanceState {
             WorkflowEvent::WorkflowFailed { .. } => {
                 self.status = InstanceStatus::Failed;
             }
-            WorkflowEvent::External { .. } => {
-                // External events are stored for audit but don't affect workflow state
+            WorkflowEvent::LLMCallStarted { .. }
+            | WorkflowEvent::LLMCallCompleted { .. }
+            | WorkflowEvent::LLMCallFailed { .. }
+            | WorkflowEvent::ToolCallStarted { .. }
+            | WorkflowEvent::ToolCallCompleted { .. }
+            | WorkflowEvent::ToolCallFailed { .. }
+            | WorkflowEvent::External { .. } => {
+                // Audit-only events: stored for observability but don't affect workflow state
             }
         }
         Ok(())
@@ -386,8 +410,8 @@ mod tests {
         let mut state = blank_state();
         state.status = InstanceStatus::Running;
         let result = state.apply(&WorkflowEvent::SignalReceived {
-                action: None,
-                reviewer: None,
+            action: None,
+            reviewer: None,
             signal_name: "approve".to_string(),
             payload: json!({}),
             received_at: Utc::now(),
