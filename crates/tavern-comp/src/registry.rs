@@ -116,6 +116,7 @@ mod tests {
                 expected_output: None,
             signal_timeout_action: None,
             breakpoint: false,
+            model_override: None,
             }],
             inputs: vec![],
             outputs: vec![],

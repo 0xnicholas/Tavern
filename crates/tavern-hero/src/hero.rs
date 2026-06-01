@@ -136,4 +136,30 @@ impl TavernHero {
             .await?;
         Ok(result)
     }
+
+    /// V0.3.9: 提交任务执行，使用指定的模型覆盖 Agent 默认模型。
+    #[instrument(skip(self, context), fields(agent_id = %agent_id, model = %model_override))]
+    pub async fn execute_with_model(
+        &self,
+        agent_id: &str,
+        task: &str,
+        context: Option<Value>,
+        model_override: &str,
+    ) -> Result<Value, TavernError> {
+        let agent = self
+            .registry
+            .read()
+            .await
+            .get(agent_id)
+            .cloned()
+            .ok_or_else(|| TavernError::AgentNotFound {
+                id: agent_id.to_string(),
+            })?;
+        info!(task_len = task.len(), model = %model_override, "submitting task to runtime with model override");
+        let result = self
+            .runtime
+            .execute(agent_id, task, context, &agent.instructions, model_override)
+            .await?;
+        Ok(result)
+    }
 }

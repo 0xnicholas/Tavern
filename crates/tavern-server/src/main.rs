@@ -488,6 +488,7 @@ mod tests {
                     expected_output: None,
             signal_timeout_action: None,
             breakpoint: false,
+            model_override: None,
                 },
                 tavern_comp::Step {
                     id: "write".to_string(),
@@ -503,6 +504,7 @@ mod tests {
                     expected_output: None,
             signal_timeout_action: None,
             breakpoint: false,
+            model_override: None,
                 },
                 tavern_comp::Step {
                     id: "edit".to_string(),
@@ -518,6 +520,7 @@ mod tests {
                     expected_output: None,
             signal_timeout_action: None,
             breakpoint: false,
+            model_override: None,
                 },
             ],
             inputs: vec![tavern_comp::InputDef {
@@ -832,6 +835,7 @@ instructions: 研究
                 expected_output: None,
             signal_timeout_action: None,
             breakpoint: false,
+            model_override: None,
             }],
             inputs: vec![],
             outputs: vec![],
@@ -876,6 +880,7 @@ instructions: 研究
                 expected_output: None,
             signal_timeout_action: None,
             breakpoint: false,
+            model_override: None,
             }],
             inputs: vec![],
             outputs: vec![],
@@ -1191,6 +1196,7 @@ instructions: 研究
                 expected_output: None,
             signal_timeout_action: None,
             breakpoint: false,
+            model_override: None,
             }],
             inputs: vec![],
             outputs: vec![],

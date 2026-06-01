@@ -59,6 +59,7 @@ fn simple_workflow() -> Workflow {
             expected_output: None,
             signal_timeout_action: None,
             breakpoint: false,
+            model_override: None,
         }],
         inputs: vec![InputDef {
             name: "input".to_string(),
@@ -222,6 +223,7 @@ async fn test_run_pipeline() {
                 expected_output: None,
             signal_timeout_action: None,
             breakpoint: false,
+            model_override: None,
             },
             Step {
                 id: "write".to_string(),
@@ -237,6 +239,7 @@ async fn test_run_pipeline() {
                 expected_output: None,
             signal_timeout_action: None,
             breakpoint: false,
+            model_override: None,
             },
             Step {
                 id: "edit".to_string(),
@@ -252,6 +255,7 @@ async fn test_run_pipeline() {
                 expected_output: None,
             signal_timeout_action: None,
             breakpoint: false,
+            model_override: None,
             },
         ],
         inputs: vec![InputDef {
@@ -437,6 +441,7 @@ instructions: test
                 expected_output: None,
             signal_timeout_action: None,
             breakpoint: false,
+            model_override: None,
             },
             Step {
                 id: "b".to_string(),
@@ -452,6 +457,7 @@ instructions: test
                 expected_output: None,
             signal_timeout_action: None,
             breakpoint: false,
+            model_override: None,
             },
         ],
         inputs: vec![],
@@ -549,6 +555,7 @@ instructions: test
                 expected_output: None,
             signal_timeout_action: None,
             breakpoint: false,
+            model_override: None,
             },
             Step {
                 id: "b".to_string(),
@@ -564,6 +571,7 @@ instructions: test
                 expected_output: None,
             signal_timeout_action: None,
             breakpoint: false,
+            model_override: None,
             },
             Step {
                 id: "c".to_string(),
@@ -579,6 +587,7 @@ instructions: test
                 expected_output: None,
             signal_timeout_action: None,
             breakpoint: false,
+            model_override: None,
             },
         ],
         inputs: vec![],
@@ -683,6 +692,7 @@ instructions: test
                 expected_output: None,
             signal_timeout_action: None,
             breakpoint: false,
+            model_override: None,
             },
             Step {
                 id: "fast".to_string(),
@@ -698,6 +708,7 @@ instructions: test
                 expected_output: None,
             signal_timeout_action: None,
             breakpoint: false,
+            model_override: None,
             },
         ],
         inputs: vec![],
@@ -788,6 +799,7 @@ fn hierarchical_workflow() -> Workflow {
                 expected_output: None,
             signal_timeout_action: None,
             breakpoint: false,
+            model_override: None,
             },
             Step {
                 id: "s2".to_string(),
@@ -803,6 +815,7 @@ fn hierarchical_workflow() -> Workflow {
                 expected_output: None,
             signal_timeout_action: None,
             breakpoint: false,
+            model_override: None,
             },
         ],
         inputs: vec![],
@@ -1387,6 +1400,7 @@ fn signal_workflow() -> Workflow {
             expected_output: None,
             signal_timeout_action: None,
             breakpoint: false,
+            model_override: None,
         }],
     }
 }

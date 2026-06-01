@@ -406,6 +406,10 @@ pub struct Step {
     #[serde(default)]
     pub breakpoint: bool,
 
+    /// V0.3.9: 覆盖 Agent 默认模型（provider + name）。
+    #[serde(default)]
+    pub model_override: Option<tavern_core::ModelConfig>,
+
     /// 可选的预期输出描述，帮助 LLM 理解任务目标。
     /// 在 Manager prompt 和 Planning Context 注入时使用。
     #[serde(default)]
