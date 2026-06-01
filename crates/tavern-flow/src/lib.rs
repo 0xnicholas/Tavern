@@ -409,10 +409,10 @@ impl<F: Flow + FlowDispatch + Send + 'static> FlowEngine<F> {
                         paused_at: chrono::Utc::now(),
                     },
                 );
-                // Re-add to pending and continue — breakpoint is fire-and-forget,
-                // resume requires external signal (via EventStore query + signal send)
-                pending.push_back(method_name.clone());
-                continue;
+                return Err(FlowError::Other(format!(
+                    "breakpoint hit at method '{}'",
+                    method_name
+                )));
             }
 
             let input = self
