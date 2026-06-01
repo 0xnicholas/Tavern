@@ -21,7 +21,9 @@ pub fn create_router(state: Arc<AppState>) -> Router {
 
     let mut protected_routes = Router::new()
         .route("/agents", get(handlers::list_agents_handler))
+        .route("/agents", post(handlers::create_agent_handler))
         .route("/agents/:id", get(handlers::get_agent_handler))
+        .route("/agents/:id", delete(handlers::delete_agent_handler))
         .route("/agents/:id/execute", post(handlers::execute_agent_handler))
         .route("/workflows", get(handlers::list_workflows_handler))
         .route("/workflows", post(handlers::create_workflow_handler))

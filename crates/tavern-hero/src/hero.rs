@@ -38,6 +38,28 @@ impl TavernHero {
         Ok(())
     }
 
+    /// V0.3.8: 运行时注册 Agent（不依赖 YAML 文件）。
+    pub async fn register_agent(&self, config: AgentConfig) -> Result<(), TavernError> {
+        let id = config.id.clone();
+        let mut registry = self.registry.write().await;
+        registry.register(config)?;
+        drop(registry);
+        info!(agent_id = %id, "agent registered at runtime");
+        Ok(())
+    }
+
+    /// V0.3.8: 运行时移除 Agent。
+    /// 若 id 不存在返回 AgentNotFound。
+    pub async fn unregister_agent(&self, id: &str) -> Result<(), TavernError> {
+        let mut registry = self.registry.write().await;
+        registry.unregister(id).ok_or_else(|| TavernError::AgentNotFound {
+            id: id.to_string(),
+        })?;
+        drop(registry);
+        info!(agent_id = %id, "agent unregistered at runtime");
+        Ok(())
+    }
+
     /// 热重载：清空后从目录重新加载所有 Agent。
     #[instrument(skip(self))]
     pub async fn reload_from_dir(&self, dir: &Path) -> Result<(), TavernError> {

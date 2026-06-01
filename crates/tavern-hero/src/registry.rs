@@ -58,6 +58,12 @@ impl AgentRegistry {
         self.agents.values().collect()
     }
 
+    /// V0.3.8: 移除已注册的 Agent。
+    /// 若 id 不存在则返回 None，调用方决定是否报错。
+    pub fn unregister(&mut self, id: &str) -> Option<AgentConfig> {
+        self.agents.remove(id)
+    }
+
     pub fn list_summary(&self) -> Vec<AgentSummary> {
         self.agents
             .values()

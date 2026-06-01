@@ -138,6 +138,32 @@ pub async fn execute_agent_handler(
     }
 }
 
+// ── V0.3.8: Agent 动态管理 ──
+
+pub async fn create_agent_handler(
+    State(state): State<Arc<AppState>>,
+    Json(config): Json<tavern_core::AgentConfig>,
+) -> Result<impl IntoResponse, (StatusCode, ApiError)> {
+    state
+        .hero
+        .register_agent(config)
+        .await
+        .map_err(|e| map_tavern_error(&e))?;
+    Ok(StatusCode::CREATED)
+}
+
+pub async fn delete_agent_handler(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+) -> Result<impl IntoResponse, (StatusCode, ApiError)> {
+    state
+        .hero
+        .unregister_agent(&id)
+        .await
+        .map_err(|e| map_tavern_error(&e))?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
 // ---------- CompError mapping ----------
 
 pub fn map_comp_error(err: CompError) -> (StatusCode, ApiError) {
