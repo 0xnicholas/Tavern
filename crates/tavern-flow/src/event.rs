@@ -35,6 +35,11 @@ pub enum FlowEvent {
         reason: String,
         failed_at: DateTime<Utc>,
     },
+    /// V0.3.7: Flow 方法断点命中。
+    BreakpointHit {
+        method_name: String,
+        paused_at: DateTime<Utc>,
+    },
 }
 
 impl FlowEvent {
@@ -46,6 +51,7 @@ impl FlowEvent {
             FlowEvent::RouterDecision { .. } => "router_decision",
             FlowEvent::FlowCompleted { .. } => "flow_completed",
             FlowEvent::FlowFailed { .. } => "flow_failed",
+            FlowEvent::BreakpointHit { .. } => "breakpoint_hit",
         };
         WorkflowEvent::External {
             event_type: event_type.to_string(),

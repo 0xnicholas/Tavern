@@ -198,6 +198,7 @@ pub fn flow_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
                             is_router: #is_router,
                             router_for: if #is_router { Some(#router_upstream.to_string()) } else { None },
                             listen_type: #listen_type_tokens,
+                            breakpoint: false,
                         }
                     });
 

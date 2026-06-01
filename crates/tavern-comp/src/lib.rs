@@ -13,7 +13,7 @@ pub mod validator;
 pub mod workflow;
 
 pub use context::render_template;
-pub use engine::{ExecutionInfo, WorkflowEngine};
+pub use engine::{send_webhook, ExecutionInfo, WorkflowEngine};
 pub use error::CompError;
 pub use event::{SignalAction, WorkflowEvent};
 pub use executor::StepExecutor;
@@ -31,6 +31,6 @@ pub use store::{EventStore, MemoryEventStore};
 pub use timer::TimerRegistry;
 pub use validator::validate_dag;
 pub use workflow::{
-    InputDef, OutputDef, Process, SignalTimeoutAction, Step, StepResult, StepStatus, Workflow,
-    WorkflowResult,
+    InputDef, OutputDef, Process, SignalTimeoutAction, Step, StepResult, StepStatus, WebhookConfig,
+    Workflow, WorkflowResult,
 };

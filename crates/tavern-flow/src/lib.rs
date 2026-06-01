@@ -45,6 +45,8 @@ pub struct MethodInfo {
     pub router_for: Option<String>,
     /// 监听类型
     pub listen_type: ListenType,
+    /// V0.3.7: 断点标记
+    pub breakpoint: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -104,7 +106,7 @@ pub enum FlowError {
 
 /// FlowGraph — 方法依赖图。
 pub(crate) struct FlowGraph {
-    nodes: HashMap<String, MethodInfo>,
+    pub(crate) nodes: HashMap<String, MethodInfo>,
     /// 下游依赖: method_name -> [下游 methods]
     downstream: HashMap<String, Vec<String>>,
     /// 上游依赖计数: method_name -> 未完成的上游数
@@ -230,6 +232,8 @@ pub struct FlowEngine<F> {
     max_concurrency: usize,
     /// 取消标志，外部可通过 FlowHandleRef 设置
     cancelled: Arc<std::sync::atomic::AtomicBool>,
+    /// V0.3.7: Webhook 配置
+    webhook: Option<tavern_comp::WebhookConfig>,
 }
 
 impl<F: Flow + FlowDispatch + Send + 'static> FlowEngine<F> {
@@ -242,6 +246,7 @@ impl<F: Flow + FlowDispatch + Send + 'static> FlowEngine<F> {
             store: None,
             max_concurrency: 1,
             cancelled: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            webhook: None,
         }
     }
 
@@ -252,6 +257,12 @@ impl<F: Flow + FlowDispatch + Send + 'static> FlowEngine<F> {
 
     pub fn with_max_concurrency(mut self, n: usize) -> Self {
         self.max_concurrency = n.max(1);
+        self
+    }
+
+    /// V0.3.7: 设置 Webhook 回调配置。
+    pub fn with_webhook(mut self, webhook: tavern_comp::WebhookConfig) -> Self {
+        self.webhook = Some(webhook);
         self
     }
 
@@ -276,6 +287,7 @@ impl<F: Flow + FlowDispatch + Send + 'static> FlowEngine<F> {
         self.cancelled = cancelled.clone();
         let flow_id_for_event = flow_id.clone();
         let store_for_event = self.store.clone();
+        let webhook_for_event = self.webhook.clone();
         tokio::spawn(async move {
             let result = if max_concurrency > 1 {
                 Self::execute_inner_parallel(
@@ -289,6 +301,7 @@ impl<F: Flow + FlowDispatch + Send + 'static> FlowEngine<F> {
                     store: self.store,
                     max_concurrency: 1,
                     cancelled,
+                    webhook: None,
                 };
                 engine.execute_inner().await
             };
@@ -300,6 +313,31 @@ impl<F: Flow + FlowDispatch + Send + 'static> FlowEngine<F> {
                         failed_at: chrono::Utc::now(),
                     };
                     let _ = store.append(&flow_id_for_event, event.to_workflow_event()).await;
+                }
+            }
+            // V0.3.7: Webhook callback
+            if let Some(ref webhook) = webhook_for_event {
+                if !webhook.url.is_empty() {
+                    let (status, outputs, error) = match &result {
+                        Ok(val) => ("completed", val.clone(), None),
+                        Err(e) => ("failed", serde_json::Value::Null, Some(e.to_string())),
+                    };
+                    let payload = serde_json::json!({
+                        "event": format!("flow.{}", status),
+                        "flow_id": flow_id_for_event,
+                        "status": status,
+                        "outputs": outputs,
+                        "error": error,
+                        "timestamp": chrono::Utc::now().to_rfc3339(),
+                    });
+                    let url = webhook.url.clone();
+                    let secret = webhook.secret.clone();
+                    let timeout_secs = webhook.timeout_secs.unwrap_or(30);
+                    let retries = webhook.retries.unwrap_or(0).min(10);
+                    let retry_delay = webhook.retry_delay.unwrap_or(5);
+                    tokio::spawn(async move {
+                        tavern_comp::send_webhook(&url, &payload, secret.as_deref(), timeout_secs, retries, retry_delay).await;
+                    });
                 }
             }
             status_clone.store(
@@ -360,6 +398,22 @@ impl<F: Flow + FlowDispatch + Send + 'static> FlowEngine<F> {
 
         while let Some(method_name) = pending.pop_front() {
             self.check_cancelled()?;
+
+            // V0.3.7: 断点检查
+            let node = self.graph.nodes.get(&method_name);
+            if node.map_or(false, |n| n.breakpoint) {
+                self.persist_event(
+                    "flow",
+                    &crate::event::FlowEvent::BreakpointHit {
+                        method_name: method_name.clone(),
+                        paused_at: chrono::Utc::now(),
+                    },
+                );
+                // Re-add to pending and continue — breakpoint is fire-and-forget,
+                // resume requires external signal (via EventStore query + signal send)
+                pending.push_back(method_name.clone());
+                continue;
+            }
 
             let input = self
                 .graph
@@ -625,6 +679,7 @@ mod tests {
                     is_router: false,
                     router_for: None,
                     listen_type: ListenType::Single(String::new()),
+                    breakpoint: false,
                 },
                 MethodInfo {
                     name: "step_b".to_string(),
@@ -632,6 +687,7 @@ mod tests {
                     is_router: false,
                     router_for: None,
                     listen_type: ListenType::Single("step_a".to_string()),
+                    breakpoint: false,
                 },
             ],
         };
@@ -725,6 +781,7 @@ mod tests {
                         is_router: false,
                         router_for: None,
                         listen_type: ListenType::Single(String::new()),
+                    breakpoint: false,
                     },
                     MethodInfo {
                         name: "step_b".to_string(),
@@ -732,6 +789,7 @@ mod tests {
                         is_router: false,
                         router_for: None,
                         listen_type: ListenType::Single("step_a".to_string()),
+                    breakpoint: false,
                     },
                 ],
             }
