@@ -1218,7 +1218,7 @@ fn build_webhook_payload(
     })
 }
 
-async fn send_webhook(
+pub async fn send_webhook(
     url: &str,
     payload: &Value,
     secret: Option<&str>,

@@ -274,6 +274,8 @@ impl<F: Flow + FlowDispatch + Send + 'static> FlowEngine<F> {
         let max_concurrency = self.max_concurrency;
         let status_clone = status.clone();
         self.cancelled = cancelled.clone();
+        let flow_id_for_event = flow_id.clone();
+        let store_for_event = self.store.clone();
         tokio::spawn(async move {
             let result = if max_concurrency > 1 {
                 Self::execute_inner_parallel(
@@ -290,6 +292,16 @@ impl<F: Flow + FlowDispatch + Send + 'static> FlowEngine<F> {
                 };
                 engine.execute_inner().await
             };
+            // Emit FlowFailed for parallel path (serial path emits internally)
+            if result.is_err() {
+                if let Some(ref store) = store_for_event {
+                    let event = crate::event::FlowEvent::FlowFailed {
+                        reason: result.as_ref().unwrap_err().to_string(),
+                        failed_at: chrono::Utc::now(),
+                    };
+                    let _ = store.append(&flow_id_for_event, event.to_workflow_event()).await;
+                }
+            }
             status_clone.store(
                 match &result {
                     Ok(_) => 2,
@@ -408,11 +420,28 @@ impl<F: Flow + FlowDispatch + Send + 'static> FlowEngine<F> {
                         }
                     }
                 }
-                Err(e) => return Err(e),
+                Err(e) => {
+                    self.persist_event(
+                        "flow",
+                        &crate::event::FlowEvent::FlowFailed {
+                            reason: e.to_string(),
+                            failed_at: chrono::Utc::now(),
+                        },
+                    );
+                    return Err(e);
+                }
             }
         }
 
-        Ok(last_output.unwrap_or(serde_json::Value::Null))
+        let final_output = last_output.unwrap_or(serde_json::Value::Null);
+        self.persist_event(
+            "flow",
+            &crate::event::FlowEvent::FlowCompleted {
+                outputs: final_output.clone(),
+                completed_at: chrono::Utc::now(),
+            },
+        );
+        Ok(final_output)
     }
 
     fn persist_event(&self, flow_id: &str, event: &crate::event::FlowEvent) {
@@ -430,7 +459,7 @@ impl<F: Flow + FlowDispatch + Send + 'static> FlowEngine<F> {
     async fn execute_inner_parallel(
         flow: F,
         mut graph: FlowGraph,
-        _store: Option<Arc<dyn tavern_comp::EventStore>>,
+        store: Option<Arc<dyn tavern_comp::EventStore>>,
         max_concurrency: usize,
         cancelled: Arc<std::sync::atomic::AtomicBool>,
     ) -> Result<serde_json::Value, FlowError> {
@@ -506,8 +535,20 @@ impl<F: Flow + FlowDispatch + Send + 'static> FlowEngine<F> {
             pending = next_batch.into();
         }
 
-        let lo = last_output.lock().await;
-        Ok(lo.clone().unwrap_or(serde_json::Value::Null))
+        let final_output = {
+            let lo = last_output.lock().await;
+            lo.clone().unwrap_or(serde_json::Value::Null)
+        };
+
+        if let Some(ref store) = store {
+            let event = crate::event::FlowEvent::FlowCompleted {
+                outputs: final_output.clone(),
+                completed_at: chrono::Utc::now(),
+            };
+            let _ = store.append("flow", event.to_workflow_event()).await;
+        }
+
+        Ok(final_output)
     }
 }
 
