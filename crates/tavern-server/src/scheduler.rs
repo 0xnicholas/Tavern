@@ -71,7 +71,8 @@ impl CronExpr {
             && self.hours.matches(dt.hour() as u8)
             && self.days_of_month.matches(dt.day() as u8)
             && self.months.matches(dt.month() as u8)
-            && self.days_of_week
+            && self
+                .days_of_week
                 .matches(dt.weekday().num_days_from_sunday() as u8)
     }
 }
@@ -291,8 +292,7 @@ impl Scheduler {
                     schedule,
                     inputs: e.inputs.clone(),
                     last_run_at: e.last_run_minute.map(|m| {
-                        let dt = DateTime::from_timestamp(m * 60, 0)
-                            .unwrap_or_default();
+                        let dt = DateTime::from_timestamp(m * 60, 0).unwrap_or_default();
                         dt.to_rfc3339()
                     }),
                     last_execution_id: e.last_execution_id.clone(),

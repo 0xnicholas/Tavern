@@ -2,9 +2,9 @@ use axum::{
     body::Body,
     http::{Request, StatusCode},
 };
-use serde_json::{json, Value};
-use std::sync::atomic::AtomicU64;
+use serde_json::{Value, json};
 use std::sync::Arc;
+use std::sync::atomic::AtomicU64;
 use std::time::Duration;
 use tower::ServiceExt;
 
@@ -31,9 +31,9 @@ fn default_workflow() -> tavern_comp::Workflow {
                 wait_for_signal: None,
                 signal_timeout: None,
                 expected_output: None,
-            signal_timeout_action: None,
-            breakpoint: false,
-            model_override: None,
+                signal_timeout_action: None,
+                breakpoint: false,
+                model_override: None,
             },
             tavern_comp::Step {
                 id: "write".to_string(),
@@ -47,9 +47,9 @@ fn default_workflow() -> tavern_comp::Workflow {
                 wait_for_signal: None,
                 signal_timeout: None,
                 expected_output: None,
-            signal_timeout_action: None,
-            breakpoint: false,
-            model_override: None,
+                signal_timeout_action: None,
+                breakpoint: false,
+                model_override: None,
             },
             tavern_comp::Step {
                 id: "edit".to_string(),
@@ -63,9 +63,9 @@ fn default_workflow() -> tavern_comp::Workflow {
                 wait_for_signal: None,
                 signal_timeout: None,
                 expected_output: None,
-            signal_timeout_action: None,
-            breakpoint: false,
-            model_override: None,
+                signal_timeout_action: None,
+                breakpoint: false,
+                model_override: None,
             },
         ],
         inputs: vec![tavern_comp::InputDef {
@@ -79,9 +79,9 @@ fn default_workflow() -> tavern_comp::Workflow {
         }],
         process: tavern_comp::Process::Sequential,
         planning: None,
-            webhook: None,
-            schedule: None,
-            schedule_inputs: serde_json::Value::Null,
+        webhook: None,
+        schedule: None,
+        schedule_inputs: serde_json::Value::Null,
     }
 }
 
@@ -152,15 +152,31 @@ instructions: 编辑
         workflow_executions: Arc::new(AtomicU64::new(0)),
         workflow_failures: Arc::new(AtomicU64::new(0)),
         workflow_duration_ms_total: Arc::new(AtomicU64::new(0)),
-                workflow_duration_buckets: [Arc::new(AtomicU64::new(0)), Arc::new(AtomicU64::new(0)), Arc::new(AtomicU64::new(0)), Arc::new(AtomicU64::new(0)), Arc::new(AtomicU64::new(0)), Arc::new(AtomicU64::new(0)), Arc::new(AtomicU64::new(0))],
+        workflow_duration_buckets: [
+            Arc::new(AtomicU64::new(0)),
+            Arc::new(AtomicU64::new(0)),
+            Arc::new(AtomicU64::new(0)),
+            Arc::new(AtomicU64::new(0)),
+            Arc::new(AtomicU64::new(0)),
+            Arc::new(AtomicU64::new(0)),
+            Arc::new(AtomicU64::new(0)),
+        ],
         max_concurrency: usize::MAX,
         event_store: Arc::new(tavern_comp::MemoryEventStore::new()),
         execution_handles: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
         event_broadcasts: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
         flow_registry: Arc::new(tavern_flow::FlowRegistry::new()),
         flow_handles: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
-        scheduler: Arc::new(Scheduler::new(hero_for_scheduler, Arc::new(tavern_comp::MemoryEventStore::new()), registry_for_scheduler)),
-        rate_limiter: tavern_server::ratelimit::RateLimiter::new(false, 10, std::collections::HashMap::new()),
+        scheduler: Arc::new(Scheduler::new(
+            hero_for_scheduler,
+            Arc::new(tavern_comp::MemoryEventStore::new()),
+            registry_for_scheduler,
+        )),
+        rate_limiter: tavern_server::ratelimit::RateLimiter::new(
+            false,
+            10,
+            std::collections::HashMap::new(),
+        ),
         config: tavern_config::TavernConfig::default(),
     }))
 }
@@ -433,9 +449,9 @@ async fn test_end_to_end_signal_workflow() {
         }],
         process: tavern_comp::Process::Sequential,
         planning: None,
-            webhook: None,
-            schedule: None,
-            schedule_inputs: serde_json::Value::Null,
+        webhook: None,
+        schedule: None,
+        schedule_inputs: serde_json::Value::Null,
     };
 
     let app = create_test_app_with_workflow(
@@ -668,15 +684,31 @@ instructions: 编辑
         workflow_executions: Arc::new(AtomicU64::new(0)),
         workflow_failures: Arc::new(AtomicU64::new(0)),
         workflow_duration_ms_total: Arc::new(AtomicU64::new(0)),
-                workflow_duration_buckets: [Arc::new(AtomicU64::new(0)), Arc::new(AtomicU64::new(0)), Arc::new(AtomicU64::new(0)), Arc::new(AtomicU64::new(0)), Arc::new(AtomicU64::new(0)), Arc::new(AtomicU64::new(0)), Arc::new(AtomicU64::new(0))],
+        workflow_duration_buckets: [
+            Arc::new(AtomicU64::new(0)),
+            Arc::new(AtomicU64::new(0)),
+            Arc::new(AtomicU64::new(0)),
+            Arc::new(AtomicU64::new(0)),
+            Arc::new(AtomicU64::new(0)),
+            Arc::new(AtomicU64::new(0)),
+            Arc::new(AtomicU64::new(0)),
+        ],
         max_concurrency: usize::MAX,
         event_store: Arc::new(tavern_comp::MemoryEventStore::new()),
         execution_handles: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
         event_broadcasts: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
         flow_registry: Arc::new(tavern_flow::FlowRegistry::new()),
         flow_handles: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
-        scheduler: Arc::new(Scheduler::new(hero_for_scheduler, Arc::new(tavern_comp::MemoryEventStore::new()), registry_for_scheduler)),
-        rate_limiter: tavern_server::ratelimit::RateLimiter::new(false, 10, std::collections::HashMap::new()),
+        scheduler: Arc::new(Scheduler::new(
+            hero_for_scheduler,
+            Arc::new(tavern_comp::MemoryEventStore::new()),
+            registry_for_scheduler,
+        )),
+        rate_limiter: tavern_server::ratelimit::RateLimiter::new(
+            false,
+            10,
+            std::collections::HashMap::new(),
+        ),
         config,
     }))
 }

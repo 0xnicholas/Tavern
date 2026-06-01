@@ -1,8 +1,8 @@
 use axum::{
+    Extension, Router,
     extract::DefaultBodyLimit,
     middleware,
     routing::{delete, get, post},
-    Extension, Router,
 };
 use std::sync::Arc;
 use tower_http::trace::TraceLayer;
@@ -69,12 +69,11 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         );
 
     // V0.3.6: 调度端点
-    protected_routes =
-        protected_routes.route("/schedules", get(handlers::list_schedules_handler));
+    protected_routes = protected_routes.route("/schedules", get(handlers::list_schedules_handler));
 
     // V0.3.3: 断点端点
-    protected_routes = protected_routes
-        .route("/breakpoints", get(handlers::list_breakpoints_handler));
+    protected_routes =
+        protected_routes.route("/breakpoints", get(handlers::list_breakpoints_handler));
 
     // V0.3.2: 审批端点
     let approval_routes = Router::new()

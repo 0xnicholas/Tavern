@@ -2,8 +2,8 @@ pub mod config;
 pub mod runtime;
 
 pub use config::{
-    is_valid_id, AgentConfig, AgentSummary, ManagerConfig, MemoryConfig, ModelConfig, Plan,
-    PlanStep, PlanningConfig, Process, SkillConfig,
+    AgentConfig, AgentSummary, ManagerConfig, MemoryConfig, ModelConfig, Plan, PlanStep,
+    PlanningConfig, Process, SkillConfig, is_valid_id,
 };
 pub use runtime::{Runtime, RuntimeError};
 

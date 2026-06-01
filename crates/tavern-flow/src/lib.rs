@@ -24,7 +24,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-pub use tavern_flow_macros::{flow_impl, listen, router, start, Flow};
+pub use tavern_flow_macros::{Flow, flow_impl, listen, router, start};
 
 pub mod event;
 pub mod registry;
@@ -291,7 +291,11 @@ impl<F: Flow + FlowDispatch + Send + 'static> FlowEngine<F> {
         tokio::spawn(async move {
             let result = if max_concurrency > 1 {
                 Self::execute_inner_parallel(
-                    self.flow, self.graph, self.store, max_concurrency, cancelled,
+                    self.flow,
+                    self.graph,
+                    self.store,
+                    max_concurrency,
+                    cancelled,
                 )
                 .await
             } else {
@@ -312,7 +316,9 @@ impl<F: Flow + FlowDispatch + Send + 'static> FlowEngine<F> {
                         reason: result.as_ref().unwrap_err().to_string(),
                         failed_at: chrono::Utc::now(),
                     };
-                    let _ = store.append(&flow_id_for_event, event.to_workflow_event()).await;
+                    let _ = store
+                        .append(&flow_id_for_event, event.to_workflow_event())
+                        .await;
                 }
             }
             // V0.3.7: Webhook callback
@@ -336,7 +342,15 @@ impl<F: Flow + FlowDispatch + Send + 'static> FlowEngine<F> {
                     let retries = webhook.retries.unwrap_or(0).min(10);
                     let retry_delay = webhook.retry_delay.unwrap_or(5);
                     tokio::spawn(async move {
-                        tavern_comp::send_webhook(&url, &payload, secret.as_deref(), timeout_secs, retries, retry_delay).await;
+                        tavern_comp::send_webhook(
+                            &url,
+                            &payload,
+                            secret.as_deref(),
+                            timeout_secs,
+                            retries,
+                            retry_delay,
+                        )
+                        .await;
                     });
                 }
             }
@@ -626,7 +640,6 @@ impl FlowHandle {
             Err(_) => Err(FlowError::Other("flow task panicked".to_string())),
         }
     }
-
 }
 
 /// FlowHandleRef — 轻量引用（Clone + Send），用于状态查询和取消。
@@ -653,7 +666,8 @@ impl FlowHandleRef {
 
     /// 取消执行。
     pub fn cancel(&self) {
-        self.cancelled.store(true, std::sync::atomic::Ordering::SeqCst);
+        self.cancelled
+            .store(true, std::sync::atomic::Ordering::SeqCst);
     }
 }
 
@@ -741,7 +755,7 @@ mod tests {
                         Err(e) => {
                             return Box::pin(std::future::ready(Err(FlowError::Serialization(
                                 e.to_string(),
-                            ))))
+                            ))));
                         }
                     };
                     Box::pin(self.step_b_wrapper(data))
@@ -781,7 +795,7 @@ mod tests {
                         is_router: false,
                         router_for: None,
                         listen_type: ListenType::Single(String::new()),
-                    breakpoint: false,
+                        breakpoint: false,
                     },
                     MethodInfo {
                         name: "step_b".to_string(),
@@ -789,7 +803,7 @@ mod tests {
                         is_router: false,
                         router_for: None,
                         listen_type: ListenType::Single("step_a".to_string()),
-                    breakpoint: false,
+                        breakpoint: false,
                     },
                 ],
             }
@@ -835,7 +849,7 @@ mod tests {
 
     // ── Proc-macro 验证: #[flow_impl] 生成正确的包装 ──
 
-    use tavern_flow_macros::{flow_impl, Flow};
+    use tavern_flow_macros::{Flow, flow_impl};
 
     #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
     struct MacroState {
@@ -922,7 +936,6 @@ mod tests {
     /// FlowEngine 事件循环 + router 条件分支。
     #[tokio::test]
     async fn test_flow_engine_with_router() {
-
         #[derive(Flow)]
         struct RouterPipeline {
             state: RouterState,

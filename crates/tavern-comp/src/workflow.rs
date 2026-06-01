@@ -7,7 +7,7 @@ use serde_json::Value;
 
 use crate::error::CompError;
 
-pub use tavern_core::{is_valid_id, ManagerConfig, Plan, PlanningConfig, Process};
+pub use tavern_core::{ManagerConfig, Plan, PlanningConfig, Process, is_valid_id};
 
 /// V0.3.2: 审批超时默认动作。
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

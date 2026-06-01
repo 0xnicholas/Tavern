@@ -10,3 +10,5 @@ Cargo.lock
 .sqlx/
 .worktrees/
 CLAUDE.md
+
+/_references

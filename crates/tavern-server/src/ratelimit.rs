@@ -4,14 +4,14 @@
 //! V0.4.0 分布式阶段改用 Redis token bucket。
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use axum::{
+    Json,
     extract::State,
     http::{HeaderName, StatusCode},
-    Json,
 };
 use tokio::sync::RwLock;
 
@@ -31,11 +31,7 @@ pub struct RateLimiter {
 }
 
 impl RateLimiter {
-    pub fn new(
-        enabled: bool,
-        default_rps: u32,
-        per_tenant: HashMap<String, u32>,
-    ) -> Self {
+    pub fn new(enabled: bool, default_rps: u32, per_tenant: HashMap<String, u32>) -> Self {
         let counters = Arc::new(RwLock::new(HashMap::<String, AtomicU64>::new()));
 
         // 每 1 秒重置所有计数器（使用 std::thread，兼容非 tokio 测试）
@@ -77,11 +73,7 @@ impl RateLimiter {
             .or_insert_with(|| AtomicU64::new(0));
         let current = entry.fetch_add(1, Ordering::Relaxed);
 
-        if current >= limit {
-            Err(())
-        } else {
-            Ok(())
-        }
+        if current >= limit { Err(()) } else { Ok(()) }
     }
 }
 
@@ -90,7 +82,8 @@ pub async fn rate_limit_middleware(
     State(state): State<Arc<AppState>>,
     request: axum::extract::Request,
     next: axum::middleware::Next,
-) -> Result<axum::response::Response, (StatusCode, [(HeaderName, &'static str); 1], Json<ApiError>)> {
+) -> Result<axum::response::Response, (StatusCode, [(HeaderName, &'static str); 1], Json<ApiError>)>
+{
     let tenant_id = request
         .extensions()
         .get::<TenantId>()

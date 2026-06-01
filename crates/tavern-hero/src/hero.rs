@@ -52,9 +52,9 @@ impl TavernHero {
     /// 若 id 不存在返回 AgentNotFound。
     pub async fn unregister_agent(&self, id: &str) -> Result<(), TavernError> {
         let mut registry = self.registry.write().await;
-        registry.unregister(id).ok_or_else(|| TavernError::AgentNotFound {
-            id: id.to_string(),
-        })?;
+        registry
+            .unregister(id)
+            .ok_or_else(|| TavernError::AgentNotFound { id: id.to_string() })?;
         drop(registry);
         info!(agent_id = %id, "agent unregistered at runtime");
         Ok(())

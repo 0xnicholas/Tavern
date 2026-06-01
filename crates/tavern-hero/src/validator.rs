@@ -1,4 +1,4 @@
-use tavern_core::{is_valid_id, AgentConfig};
+use tavern_core::{AgentConfig, is_valid_id};
 
 /// 校验 Agent 配置的合法性。
 ///

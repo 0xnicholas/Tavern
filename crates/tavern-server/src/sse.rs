@@ -4,11 +4,11 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use axum::{
     extract::{Path, Query, State},
-    response::{sse::Event, Sse},
+    response::{Sse, sse::Event},
 };
 use serde::Deserialize;
-use tokio::sync::{broadcast, RwLock};
-use tokio_stream::{wrappers::BroadcastStream, StreamExt};
+use tokio::sync::{RwLock, broadcast};
+use tokio_stream::{StreamExt, wrappers::BroadcastStream};
 
 use tavern_comp::{CompError, EventStore, WorkflowEvent};
 

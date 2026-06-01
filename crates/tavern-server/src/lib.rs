@@ -2,7 +2,7 @@ pub mod auth;
 pub mod handlers;
 pub mod ratelimit;
 pub mod router;
+pub mod scheduler;
 pub mod shutdown;
 pub mod sse;
 pub mod state;
-pub mod scheduler;

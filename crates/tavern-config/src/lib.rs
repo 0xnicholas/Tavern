@@ -1,8 +1,8 @@
 use figment::{
-    providers::{Env, Format, Toml},
     Figment,
+    providers::{Env, Format, Toml},
 };
-use serde::{de::Visitor, Deserialize, Deserializer, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, de::Visitor};
 
 /// Tavern 应用完整配置。
 #[derive(Debug, Clone, Deserialize, Serialize)]

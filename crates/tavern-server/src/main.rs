@@ -1,8 +1,8 @@
 use notify::Watcher;
 use std::net::SocketAddr;
 use std::path::Path;
-use std::sync::atomic::AtomicU64;
 use std::sync::Arc;
+use std::sync::atomic::AtomicU64;
 
 use tavern_core::Runtime;
 use tavern_hero::TavernHero;
@@ -134,7 +134,15 @@ async fn main() {
         workflow_executions: Arc::new(AtomicU64::new(0)),
         workflow_failures: Arc::new(AtomicU64::new(0)),
         workflow_duration_ms_total: Arc::new(AtomicU64::new(0)),
-        workflow_duration_buckets: [Arc::new(AtomicU64::new(0)), Arc::new(AtomicU64::new(0)), Arc::new(AtomicU64::new(0)), Arc::new(AtomicU64::new(0)), Arc::new(AtomicU64::new(0)), Arc::new(AtomicU64::new(0)), Arc::new(AtomicU64::new(0))],
+        workflow_duration_buckets: [
+            Arc::new(AtomicU64::new(0)),
+            Arc::new(AtomicU64::new(0)),
+            Arc::new(AtomicU64::new(0)),
+            Arc::new(AtomicU64::new(0)),
+            Arc::new(AtomicU64::new(0)),
+            Arc::new(AtomicU64::new(0)),
+            Arc::new(AtomicU64::new(0)),
+        ],
         max_concurrency: config.server.max_workflow_concurrency,
         event_store: event_store.clone(),
         execution_handles: execution_handles.clone(),
@@ -144,7 +152,12 @@ async fn main() {
         rate_limiter: RateLimiter::new(
             config.rate_limit.enabled,
             config.rate_limit.default_rps,
-            config.rate_limit.per_tenant.iter().map(|(k, v)| (k.clone(), v.rps)).collect(),
+            config
+                .rate_limit
+                .per_tenant
+                .iter()
+                .map(|(k, v)| (k.clone(), v.rps))
+                .collect(),
         ),
         scheduler: scheduler.clone(),
         config: config.clone(),
@@ -455,7 +468,7 @@ mod tests {
         body::Body,
         http::{Request, StatusCode},
     };
-    use serde_json::{json, Value};
+    use serde_json::{Value, json};
     use std::sync::Arc;
     use tower::ServiceExt;
 
@@ -486,9 +499,9 @@ mod tests {
                     wait_for_signal: None,
                     signal_timeout: None,
                     expected_output: None,
-            signal_timeout_action: None,
-            breakpoint: false,
-            model_override: None,
+                    signal_timeout_action: None,
+                    breakpoint: false,
+                    model_override: None,
                 },
                 tavern_comp::Step {
                     id: "write".to_string(),
@@ -502,9 +515,9 @@ mod tests {
                     wait_for_signal: None,
                     signal_timeout: None,
                     expected_output: None,
-            signal_timeout_action: None,
-            breakpoint: false,
-            model_override: None,
+                    signal_timeout_action: None,
+                    breakpoint: false,
+                    model_override: None,
                 },
                 tavern_comp::Step {
                     id: "edit".to_string(),
@@ -518,9 +531,9 @@ mod tests {
                     wait_for_signal: None,
                     signal_timeout: None,
                     expected_output: None,
-            signal_timeout_action: None,
-            breakpoint: false,
-            model_override: None,
+                    signal_timeout_action: None,
+                    breakpoint: false,
+                    model_override: None,
                 },
             ],
             inputs: vec![tavern_comp::InputDef {
@@ -802,7 +815,15 @@ instructions: 研究
             workflow_executions: Arc::new(AtomicU64::new(0)),
             workflow_failures: Arc::new(AtomicU64::new(0)),
             workflow_duration_ms_total: Arc::new(AtomicU64::new(0)),
-        workflow_duration_buckets: [Arc::new(AtomicU64::new(0)), Arc::new(AtomicU64::new(0)), Arc::new(AtomicU64::new(0)), Arc::new(AtomicU64::new(0)), Arc::new(AtomicU64::new(0)), Arc::new(AtomicU64::new(0)), Arc::new(AtomicU64::new(0))],
+            workflow_duration_buckets: [
+                Arc::new(AtomicU64::new(0)),
+                Arc::new(AtomicU64::new(0)),
+                Arc::new(AtomicU64::new(0)),
+                Arc::new(AtomicU64::new(0)),
+                Arc::new(AtomicU64::new(0)),
+                Arc::new(AtomicU64::new(0)),
+                Arc::new(AtomicU64::new(0)),
+            ],
             max_concurrency: usize::MAX,
             event_store: Arc::new(tavern_comp::MemoryEventStore::new()),
             execution_handles: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
@@ -810,7 +831,11 @@ instructions: 研究
             flow_registry: Arc::new(tavern_flow::FlowRegistry::new()),
             flow_handles: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
             rate_limiter: RateLimiter::new(false, 10, std::collections::HashMap::new()),
-            scheduler: Arc::new(Scheduler::new(hero_for_scheduler, Arc::new(tavern_comp::MemoryEventStore::new()), registry_for_scheduler)),
+            scheduler: Arc::new(Scheduler::new(
+                hero_for_scheduler,
+                Arc::new(tavern_comp::MemoryEventStore::new()),
+                registry_for_scheduler,
+            )),
             config: tavern_config::TavernConfig::default(),
         }))
     }
@@ -833,9 +858,9 @@ instructions: 研究
                 wait_for_signal: None,
                 signal_timeout: None,
                 expected_output: None,
-            signal_timeout_action: None,
-            breakpoint: false,
-            model_override: None,
+                signal_timeout_action: None,
+                breakpoint: false,
+                model_override: None,
             }],
             inputs: vec![],
             outputs: vec![],
@@ -878,9 +903,9 @@ instructions: 研究
                 wait_for_signal: None,
                 signal_timeout: None,
                 expected_output: None,
-            signal_timeout_action: None,
-            breakpoint: false,
-            model_override: None,
+                signal_timeout_action: None,
+                breakpoint: false,
+                model_override: None,
             }],
             inputs: vec![],
             outputs: vec![],
@@ -1194,9 +1219,9 @@ instructions: 研究
                 wait_for_signal: Some("approve".to_string()),
                 signal_timeout: None,
                 expected_output: None,
-            signal_timeout_action: None,
-            breakpoint: false,
-            model_override: None,
+                signal_timeout_action: None,
+                breakpoint: false,
+                model_override: None,
             }],
             inputs: vec![],
             outputs: vec![],
@@ -1351,7 +1376,15 @@ instructions: 研究
             workflow_executions: Arc::new(AtomicU64::new(0)),
             workflow_failures: Arc::new(AtomicU64::new(0)),
             workflow_duration_ms_total: Arc::new(AtomicU64::new(0)),
-        workflow_duration_buckets: [Arc::new(AtomicU64::new(0)), Arc::new(AtomicU64::new(0)), Arc::new(AtomicU64::new(0)), Arc::new(AtomicU64::new(0)), Arc::new(AtomicU64::new(0)), Arc::new(AtomicU64::new(0)), Arc::new(AtomicU64::new(0))],
+            workflow_duration_buckets: [
+                Arc::new(AtomicU64::new(0)),
+                Arc::new(AtomicU64::new(0)),
+                Arc::new(AtomicU64::new(0)),
+                Arc::new(AtomicU64::new(0)),
+                Arc::new(AtomicU64::new(0)),
+                Arc::new(AtomicU64::new(0)),
+                Arc::new(AtomicU64::new(0)),
+            ],
             max_concurrency: usize::MAX,
             event_store: Arc::new(tavern_comp::MemoryEventStore::new()),
             execution_handles: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
@@ -1359,7 +1392,11 @@ instructions: 研究
             flow_registry: Arc::new(tavern_flow::FlowRegistry::new()),
             flow_handles: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
             rate_limiter: RateLimiter::new(false, 10, std::collections::HashMap::new()),
-            scheduler: Arc::new(Scheduler::new(hero_for_scheduler, Arc::new(tavern_comp::MemoryEventStore::new()), registry_for_scheduler)),
+            scheduler: Arc::new(Scheduler::new(
+                hero_for_scheduler,
+                Arc::new(tavern_comp::MemoryEventStore::new()),
+                registry_for_scheduler,
+            )),
             config: tavern_config::TavernConfig::default(),
         }));
 
@@ -1528,9 +1565,7 @@ instructions: 研究
                     .method("POST")
                     .uri("/workflows/unknown/run_batch")
                     .header("content-type", "application/json")
-                    .body(Body::from(
-                        json!({ "inputs": [{ "x": 1 }] }).to_string(),
-                    ))
+                    .body(Body::from(json!({ "inputs": [{ "x": 1 }] }).to_string()))
                     .unwrap(),
             )
             .await

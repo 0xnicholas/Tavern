@@ -1,13 +1,13 @@
 use axum::{
+    Json,
     extract::{Path, Query, State},
     http::StatusCode,
     response::IntoResponse,
-    Json,
 };
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
-use std::sync::atomic::{AtomicU64, Ordering};
+use serde_json::{Value, json};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use tavern_comp::{CompError, SignalAction};
 use tavern_core::RuntimeError;
 use tavern_hero::TavernError;
@@ -909,8 +909,12 @@ pub async fn metrics_handler(State(state): State<Arc<AppState>>) -> impl IntoRes
         executions,
         failures,
         duration_ms,
-        b0, b0 + b1, b0 + b1 + b2, b0 + b1 + b2 + b3,
-        b0 + b1 + b2 + b3 + b4, b0 + b1 + b2 + b3 + b4 + b5,
+        b0,
+        b0 + b1,
+        b0 + b1 + b2,
+        b0 + b1 + b2 + b3,
+        b0 + b1 + b2 + b3 + b4,
+        b0 + b1 + b2 + b3 + b4 + b5,
         executions,
         executions,
         duration_ms as f64 / 1000.0,
@@ -1088,7 +1092,7 @@ pub async fn clone_execution_handler(
             None => {
                 return Err(map_comp_error(CompError::WorkflowNotFound {
                     id: info.workflow_id,
-                }))
+                }));
             }
         }
     };
@@ -1220,7 +1224,10 @@ pub async fn list_approvals_handler(
 
         // Merge step outputs into context
         if let Some(obj) = context.as_object_mut() {
-            for (key, val) in instance_state.context.as_object().unwrap_or(&serde_json::Map::new())
+            for (key, val) in instance_state
+                .context
+                .as_object()
+                .unwrap_or(&serde_json::Map::new())
             {
                 if key != "signals" {
                     obj.insert(key.clone(), val.clone());
@@ -1342,12 +1349,11 @@ async fn send_approval_signal(
     {
         let handles = state.execution_handles.read().await;
         if let Some(signal_tx) = handles.get(&execution_id) {
-            signal_tx
-                .send(event.clone())
-                .await
-                .map_err(|_| map_comp_error(CompError::InstanceClosed {
+            signal_tx.send(event.clone()).await.map_err(|_| {
+                map_comp_error(CompError::InstanceClosed {
                     id: execution_id.clone(),
-                }))?;
+                })
+            })?;
             return Ok(StatusCode::ACCEPTED);
         }
     }
@@ -1364,9 +1370,7 @@ async fn send_approval_signal(
 
 // ── V0.3.6: 定时调度 handler ──
 
-pub async fn list_schedules_handler(
-    State(state): State<Arc<AppState>>,
-) -> impl IntoResponse {
+pub async fn list_schedules_handler(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     let schedules = state.scheduler.list().await;
     Json(serde_json::json!({ "schedules": schedules }))
 }

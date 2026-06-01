@@ -13,7 +13,9 @@ use crate::executor::StepExecutor;
 use crate::instance::{InstanceState, InstanceStatus};
 use crate::store::{EventStore, MemoryEventStore};
 use crate::timer::TimerRegistry;
-use crate::workflow::{ManagerConfig, Process, SignalTimeoutAction, StepStatus, Workflow, WorkflowResult};
+use crate::workflow::{
+    ManagerConfig, Process, SignalTimeoutAction, StepStatus, Workflow, WorkflowResult,
+};
 
 use super::handle::ExecutionHandle;
 
@@ -710,13 +712,22 @@ impl WorkflowEngine {
                     Err(e) => {
                         error_str = Some(e.to_string());
                         let ctx = state.context.clone();
-                        let outputs = self.build_workflow_outputs(&workflow, &state).unwrap_or_default();
-                        let step_results = serde_json::to_value(&state.step_results).unwrap_or_default();
+                        let outputs = self
+                            .build_workflow_outputs(&workflow, &state)
+                            .unwrap_or_default();
+                        let step_results =
+                            serde_json::to_value(&state.step_results).unwrap_or_default();
                         ("failed", ctx, outputs, step_results)
                     }
                 };
                 let payload = build_webhook_payload(
-                    &workflow.id, &instance_id, status, &context, &outputs, &step_results, error_str.as_deref(),
+                    &workflow.id,
+                    &instance_id,
+                    status,
+                    &context,
+                    &outputs,
+                    &step_results,
+                    error_str.as_deref(),
                 );
                 let url = webhook.url.clone();
                 let secret = webhook.secret.clone();
@@ -724,7 +735,15 @@ impl WorkflowEngine {
                 let retries = webhook.retries.unwrap_or(0).min(10);
                 let retry_delay = webhook.retry_delay.unwrap_or(5);
                 tokio::spawn(async move {
-                    send_webhook(&url, &payload, secret.as_deref(), timeout_secs, retries, retry_delay).await;
+                    send_webhook(
+                        &url,
+                        &payload,
+                        secret.as_deref(),
+                        timeout_secs,
+                        retries,
+                        retry_delay,
+                    )
+                    .await;
                 });
             }
         }
@@ -1137,10 +1156,7 @@ pub struct ExecutionInfo {
 impl WorkflowEngine {
     /// 从 EventStore 读取执行实例的 inputs、workflow_id 和当前状态。
     /// 一次读取完成，避免 handler 层二次查询。
-    pub async fn get_execution_info(
-        &self,
-        instance_id: &str,
-    ) -> Result<ExecutionInfo, CompError> {
+    pub async fn get_execution_info(&self, instance_id: &str) -> Result<ExecutionInfo, CompError> {
         let events = self.store.read_stream(instance_id).await?;
         if events.is_empty() {
             return Err(CompError::InstanceNotFound {
