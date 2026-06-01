@@ -120,27 +120,27 @@
 | 租户级限流 | P1 | `tower::limit::RateLimit`，按 API Key 隔离 |
 | 执行克隆 | P2 | 复制历史执行输入，重新触发 |
 
----
+## V0.3.2 ~ V0.3.9 — 管控增强系列
 
-## V0.4.0 — 分布式 + 多租户（Planned）
+> 状态：✅ 全部完成 (2026-05-30)  
+> 测试：204 passed
 
-> 目标：水平扩展、高可用、租户隔离
-
-| 里程碑 | 优先级 | 技术选型 |
-|--------|:---:|----------|
-| Redis 任务队列 | P0 | `redis` crate |
-| 执行器工作节点 | P0 | 新增 crate，从 Server 解耦 |
-| 分布式锁 | P1 | Redis Redlock |
-| 状态同步 | P1 | 基于 EventStore + 乐观锁 |
-| gRPC 内部通信 | P2 | `tonic`（Server ↔ Worker） |
-| Kubernetes 部署 | P2 | Helm Chart + HPA |
-| 多租户数据隔离 | P1 | PostgreSQL row-level security 或 schema 隔离 |
+| 版本 | 功能 | 说明 |
+|------|------|------|
+| V0.3.2 | 审批 + 克隆 + 限流 | SignalAction Approve/Reject、执行克隆、租户限流 |
+| V0.3.3 | 断点调试 | 步骤级 breakpoint + 信号恢复 |
+| V0.3.4 | 批量执行 | 并行批量 Workflow + 部分失败聚合 |
+| V0.3.5 | Webhook 回调 | Workflow 完成回调 + HMAC 签名 |
+| V0.3.6 | Cron 定时调度 | 5 字段 cron + 后台调度器 |
+| V0.3.7 | Flow 管控对齐 | Flow 引擎断点 + Webhook + EventStore 持久化 |
+| V0.3.8 | Agent 动态管理 | 运行时 CRUD Agent，无 YAML 依赖 |
+| V0.3.9 | 步骤级模型覆盖 | Step.model_override 覆盖 Agent 默认模型 |
 
 ---
 
 ## V1.0.0 — GA 发布（Future）
 
-> API 冻结，长期支持
+> API 冻结，长期支持。等待多租户 + 可观测性外部 crate 就绪后集成。
 
 ---
 
@@ -162,3 +162,11 @@
 | V0.1.0 | 2026-05-20 | 106 | 初始 MVP |
 | V0.2.0 | 2026-05-26 | 172 | 生产就绪：持久化、认证、SSE、Flow 原型、恢复 |
 | V0.3.0 | 2026-05-27 | 173 | Flow 生产化：并行执行、REST API、FlowRegistry、持久化、Router 多 label |
+| V0.3.2 | 2026-05-30 | 194 | 审批节点 + 执行克隆 + 租户限流 |
+| V0.3.3 | 2026-05-30 | 194 | 断点调试 |
+| V0.3.4 | 2026-05-30 | 198 | 批量执行 |
+| V0.3.5 | 2026-05-30 | 198 | Webhook 回调 |
+| V0.3.6 | 2026-05-30 | 204 | Cron 定时调度 |
+| V0.3.7 | 2026-05-30 | 204 | Flow 管控对齐 |
+| V0.3.8 | 2026-05-30 | 204 | Agent 动态管理 |
+| V0.3.9 | 2026-05-30 | 204 | 步骤级模型覆盖 |

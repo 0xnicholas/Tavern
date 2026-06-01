@@ -3,8 +3,10 @@
 
 Fast and Flexible Multi-Agent Automation Framework — event-sourced orchestration with pluggable agent runtimes.
 
-- **Tavern Hero**: Agent lifecycle management — YAML-defined agents, in-memory registry, validation
-- **Tavern Comp**: Event-sourced workflow engine — DAG scheduling, template context passing, retries, signals, async execution with state querying
+- **Tavern Hero**: Agent lifecycle management — YAML-defined agents, runtime CRUD, validation
+- **Tavern Comp**: Event-sourced workflow engine — DAG scheduling, parallel execution, retries, signals, approval gates, breakpoints
+- **Tavern Flow**: Method-level event-driven orchestration — `#[start]` `#[listen]` `#[router]` macros, parallel execution
+- **Tavern Server**: REST API, SSE event streams, Prometheus metrics, auth, rate limiting
 
 Consumes [Pandaria](https://github.com/0xnicholas/pandaria) as the agent execution runtime.
 
