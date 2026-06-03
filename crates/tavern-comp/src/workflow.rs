@@ -692,7 +692,9 @@ planning:
 
     #[test]
     fn test_router_config_serialize() {
-        let cfg = RouterConfig { upstream: "step_a".into() };
+        let cfg = RouterConfig {
+            upstream: "step_a".into(),
+        };
         let json = serde_json::to_string(&cfg).unwrap();
         assert!(json.contains("upstream"));
         assert!(json.contains("step_a"));

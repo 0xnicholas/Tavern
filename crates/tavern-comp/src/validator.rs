@@ -41,7 +41,9 @@ pub fn build_dag_maps(workflow: &Workflow) -> DagMaps {
             for upstream in &step.or_depends_on {
                 // 非 label 边加入邻接表（用于环检测）
                 if !upstream.starts_with("__label__") {
-                    adj.entry(upstream.clone()).or_default().push(step.id.clone());
+                    adj.entry(upstream.clone())
+                        .or_default()
+                        .push(step.id.clone());
                 }
             }
         } else {
@@ -128,7 +130,9 @@ pub fn validate_dag(workflow: &Workflow) -> Result<Vec<String>, CompError> {
         if let Some(neighbors) = adj.get(&id) {
             for neighbor in neighbors {
                 let d = in_degree.get_mut(neighbor).unwrap();
-                *d -= 1;
+                // saturating_sub: OR steps start at in_degree=1 but may have multiple non-label
+                // upstreams that all point to the same step in adj; decrementing past 0 is a no-op.
+                *d = d.saturating_sub(1);
                 if *d == 0 {
                     queue.push_back(neighbor.clone());
                 }
@@ -311,9 +315,7 @@ mod tests {
             ..base_workflow()
         };
         let err = validate_dag(&workflow).unwrap_err();
-        assert!(
-            matches!(err, CompError::StepNotFound { id } if id == "nonexistent")
-        );
+        assert!(matches!(err, CompError::StepNotFound { id } if id == "nonexistent"));
     }
 
     #[test]
@@ -331,10 +333,7 @@ mod tests {
     #[test]
     fn test_or_dep_cycle_detected() {
         let workflow = Workflow {
-            steps: vec![
-                make_step_or("a", vec!["b"]),
-                make_step("b", vec!["a"]),
-            ],
+            steps: vec![make_step_or("a", vec!["b"]), make_step("b", vec!["a"])],
             ..base_workflow()
         };
         let err = validate_dag(&workflow).unwrap_err();
