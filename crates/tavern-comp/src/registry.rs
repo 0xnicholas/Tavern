@@ -117,6 +117,8 @@ mod tests {
                 signal_timeout_action: None,
                 breakpoint: false,
                 model_override: None,
+                or_depends_on: vec![],
+                router: None,
             }],
             inputs: vec![],
             outputs: vec![],

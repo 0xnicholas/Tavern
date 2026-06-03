@@ -60,6 +60,8 @@ fn simple_workflow() -> Workflow {
             signal_timeout_action: None,
             breakpoint: false,
             model_override: None,
+                    or_depends_on: vec![],
+                    router: None,
         }],
         inputs: vec![InputDef {
             name: "input".to_string(),
@@ -224,6 +226,8 @@ async fn test_run_pipeline() {
                 signal_timeout_action: None,
                 breakpoint: false,
                 model_override: None,
+                    or_depends_on: vec![],
+                    router: None,
             },
             Step {
                 id: "write".to_string(),
@@ -240,6 +244,8 @@ async fn test_run_pipeline() {
                 signal_timeout_action: None,
                 breakpoint: false,
                 model_override: None,
+                    or_depends_on: vec![],
+                    router: None,
             },
             Step {
                 id: "edit".to_string(),
@@ -256,6 +262,8 @@ async fn test_run_pipeline() {
                 signal_timeout_action: None,
                 breakpoint: false,
                 model_override: None,
+                    or_depends_on: vec![],
+                    router: None,
             },
         ],
         inputs: vec![InputDef {
@@ -442,6 +450,8 @@ instructions: test
                 signal_timeout_action: None,
                 breakpoint: false,
                 model_override: None,
+                    or_depends_on: vec![],
+                    router: None,
             },
             Step {
                 id: "b".to_string(),
@@ -458,6 +468,8 @@ instructions: test
                 signal_timeout_action: None,
                 breakpoint: false,
                 model_override: None,
+                    or_depends_on: vec![],
+                    router: None,
             },
         ],
         inputs: vec![],
@@ -556,6 +568,8 @@ instructions: test
                 signal_timeout_action: None,
                 breakpoint: false,
                 model_override: None,
+                    or_depends_on: vec![],
+                    router: None,
             },
             Step {
                 id: "b".to_string(),
@@ -572,6 +586,8 @@ instructions: test
                 signal_timeout_action: None,
                 breakpoint: false,
                 model_override: None,
+                    or_depends_on: vec![],
+                    router: None,
             },
             Step {
                 id: "c".to_string(),
@@ -588,6 +604,8 @@ instructions: test
                 signal_timeout_action: None,
                 breakpoint: false,
                 model_override: None,
+                    or_depends_on: vec![],
+                    router: None,
             },
         ],
         inputs: vec![],
@@ -693,6 +711,8 @@ instructions: test
                 signal_timeout_action: None,
                 breakpoint: false,
                 model_override: None,
+                    or_depends_on: vec![],
+                    router: None,
             },
             Step {
                 id: "fast".to_string(),
@@ -709,6 +729,8 @@ instructions: test
                 signal_timeout_action: None,
                 breakpoint: false,
                 model_override: None,
+                    or_depends_on: vec![],
+                    router: None,
             },
         ],
         inputs: vec![],
@@ -800,6 +822,8 @@ fn hierarchical_workflow() -> Workflow {
                 signal_timeout_action: None,
                 breakpoint: false,
                 model_override: None,
+                    or_depends_on: vec![],
+                    router: None,
             },
             Step {
                 id: "s2".to_string(),
@@ -816,6 +840,8 @@ fn hierarchical_workflow() -> Workflow {
                 signal_timeout_action: None,
                 breakpoint: false,
                 model_override: None,
+                    or_depends_on: vec![],
+                    router: None,
             },
         ],
         inputs: vec![],
@@ -1407,6 +1433,8 @@ fn signal_workflow() -> Workflow {
             signal_timeout_action: None,
             breakpoint: false,
             model_override: None,
+                    or_depends_on: vec![],
+                    router: None,
         }],
     }
 }

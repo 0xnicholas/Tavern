@@ -351,6 +351,16 @@ impl Workflow {
     }
 }
 
+/// V0.4: Router 路由配置。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RouterConfig {
+    /// 路由输入来源 step_id
+    pub upstream: String,
+}
+
+/// 哨兵值：标记此 step 由 Flow 方法执行，非 Agent 调用。
+pub const FLOW_AGENT_ID: &str = "__flow__";
+
 /// 工作流中的一个执行步骤。
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Step {
@@ -414,6 +424,37 @@ pub struct Step {
     /// 在 Manager prompt 和 Planning Context 注入时使用。
     #[serde(default)]
     pub expected_output: Option<String>,
+
+    /// V0.4: OR 依赖——任一上游完成即触发。与 depends_on 互斥。
+    #[serde(default)]
+    pub or_depends_on: Vec<String>,
+
+    /// V0.4: Router 配置——非 None 时此 step 执行后产生 label(s) 触发下游。
+    #[serde(default)]
+    pub router: Option<RouterConfig>,
+}
+
+impl Default for Step {
+    fn default() -> Self {
+        Self {
+            id: String::new(),
+            agent_id: String::new(),
+            task: String::new(),
+            depends_on: vec![],
+            output_key: None,
+            timeout: None,
+            retries: None,
+            retry_delay: None,
+            wait_for_signal: None,
+            signal_timeout: None,
+            signal_timeout_action: None,
+            breakpoint: false,
+            model_override: None,
+            expected_output: None,
+            or_depends_on: vec![],
+            router: None,
+        }
+    }
 }
 
 /// 外部输入参数定义。
@@ -645,5 +686,48 @@ planning:
         let planning = workflow.planning.unwrap();
         assert!(planning.enabled);
         assert_eq!(planning.planning_agent.as_deref(), Some("planner"));
+    }
+
+    // ── V0.4: OR dependency + Router fields ──
+
+    #[test]
+    fn test_router_config_serialize() {
+        let cfg = RouterConfig { upstream: "step_a".into() };
+        let json = serde_json::to_string(&cfg).unwrap();
+        assert!(json.contains("upstream"));
+        assert!(json.contains("step_a"));
+        let back: RouterConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.upstream, "step_a");
+    }
+
+    #[test]
+    fn test_step_with_or_depends_on_deserialize() {
+        let yaml = r#"
+id: s1
+agent_id: a1
+task: do something
+or_depends_on:
+  - upstream_a
+  - upstream_b
+"#;
+        let step: Step = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(step.or_depends_on, vec!["upstream_a", "upstream_b"]);
+        assert!(step.depends_on.is_empty());
+    }
+
+    #[test]
+    fn test_step_with_router_deserialize() {
+        let yaml = r#"
+id: s1
+agent_id: a1
+task: route
+depends_on:
+  - source
+router:
+  upstream: source
+"#;
+        let step: Step = serde_yaml::from_str(yaml).unwrap();
+        assert!(step.router.is_some());
+        assert_eq!(step.router.unwrap().upstream, "source");
     }
 }
