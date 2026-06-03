@@ -117,9 +117,11 @@ pub fn validate_dag(workflow: &Workflow) -> Result<Vec<String>, CompError> {
 
     // Kahn 算法
     let mut queue: VecDeque<String> = VecDeque::new();
+    let mut enqueued: HashSet<String> = HashSet::new();
     for (id, degree) in &in_degree {
         if *degree == 0 {
             queue.push_back(id.clone());
+            enqueued.insert(id.clone());
         }
     }
 
@@ -133,7 +135,8 @@ pub fn validate_dag(workflow: &Workflow) -> Result<Vec<String>, CompError> {
                 // saturating_sub: OR steps start at in_degree=1 but may have multiple non-label
                 // upstreams that all point to the same step in adj; decrementing past 0 is a no-op.
                 *d = d.saturating_sub(1);
-                if *d == 0 {
+                // V0.4: prevent double-enqueue of OR steps that hit 0 multiple times
+                if *d == 0 && enqueued.insert(neighbor.clone()) {
                     queue.push_back(neighbor.clone());
                 }
             }

@@ -1568,3 +1568,66 @@ async fn test_list_by_status_finds_running_instances() {
     let events = store.read_stream(&instance_id).await.unwrap();
     assert!(!events.is_empty());
 }
+
+// ── V0.4: OR dependency tests ──
+
+/// OR dependency — first upstream completion triggers downstream.
+#[tokio::test]
+async fn test_or_dependency_first_upstream_triggers() {
+    let engine = make_engine(|_agent_id, task, _context, _system_prompt, _model| {
+        Ok(serde_json::Value::String(format!("result_{}", task)))
+    })
+    .await;
+
+    let workflow = Workflow {
+        id: "or_test".into(),
+        name: "OR Test".into(),
+        steps: vec![
+            Step {
+                id: "a".into(),
+                agent_id: "test_agent".into(),
+                task: "A".into(),
+                output_key: Some("a_out".into()),
+                ..Default::default()
+            },
+            Step {
+                id: "b".into(),
+                agent_id: "test_agent".into(),
+                task: "B".into(),
+                output_key: Some("b_out".into()),
+                ..Default::default()
+            },
+            Step {
+                id: "c".into(),
+                agent_id: "test_agent".into(),
+                task: "C".into(),
+                or_depends_on: vec!["a".into(), "b".into()],
+                ..Default::default()
+            },
+        ],
+        ..Workflow {
+            id: "or_test".into(),
+            name: "OR Test".into(),
+            description: None,
+            steps: vec![],
+            inputs: vec![],
+            outputs: vec![],
+            process: Process::Sequential,
+            planning: None,
+            webhook: None,
+            schedule: None,
+            schedule_inputs: serde_json::Value::Null,
+        }
+    };
+
+    let result = engine.run(&workflow, json!({})).await.unwrap();
+    // Step c should have been triggered when either a or b completed
+    assert!(
+        matches!(result.step_results["c"].status, StepStatus::Completed),
+        "step c should be Completed"
+    );
+    assert!(
+        result.step_results["c"].output.is_some(),
+        "step c should have output"
+    );
+}

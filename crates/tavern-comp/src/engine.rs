@@ -799,7 +799,8 @@ impl WorkflowEngine {
             _ => {}
         }
 
-        let mut in_degree = crate::validator::build_dag_maps(workflow).in_degree;
+        let dag = crate::validator::build_dag_maps(workflow);
+        let mut in_degree = dag.in_degree;
 
         for completed in &state.completed_steps {
             for step in &workflow.steps {
@@ -807,6 +808,10 @@ impl WorkflowEngine {
                     if let Some(d) = in_degree.get_mut(&step.id) {
                         *d = d.saturating_sub(1);
                     }
+                }
+                // V0.4: OR 依赖——任一上游完成即清零（触发执行）
+                if step.or_depends_on.contains(completed) {
+                    in_degree.insert(step.id.clone(), 0);
                 }
             }
         }
