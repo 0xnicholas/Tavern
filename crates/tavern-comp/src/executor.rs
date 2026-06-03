@@ -7,22 +7,26 @@ use tokio::sync::mpsc;
 
 use crate::context::render_template;
 use crate::event::WorkflowEvent;
-use crate::workflow::Step;
+use crate::flow_executor::FlowStepExecutor;
+use crate::workflow::{FLOW_AGENT_ID, Step};
 
 pub struct StepExecutor {
-    hero: Arc<tavern_hero::TavernHero>,
+    hero: Option<Arc<tavern_hero::TavernHero>>,
+    flow_executor: Option<Arc<tokio::sync::Mutex<dyn FlowStepExecutor>>>,
     tx: mpsc::Sender<WorkflowEvent>,
     semaphore: Arc<tokio::sync::Semaphore>,
 }
 
 impl StepExecutor {
     pub fn new(
-        hero: Arc<tavern_hero::TavernHero>,
+        hero: Option<Arc<tavern_hero::TavernHero>>,
+        flow_executor: Option<Arc<tokio::sync::Mutex<dyn FlowStepExecutor>>>,
         tx: mpsc::Sender<WorkflowEvent>,
         max_concurrency: usize,
     ) -> Self {
         Self {
             hero,
+            flow_executor,
             tx,
             semaphore: Arc::new(tokio::sync::Semaphore::new(max_concurrency.min(65536))),
         }
@@ -30,6 +34,7 @@ impl StepExecutor {
 
     pub async fn submit(&self, step: Arc<Step>, context: Value, attempt: u64, will_retry: bool) {
         let hero = self.hero.clone();
+        let flow_executor = self.flow_executor.clone();
         let tx = self.tx.clone();
         let output_key = step.output_key.clone();
         let permit = self.semaphore.clone().acquire_owned().await.unwrap();
@@ -50,7 +55,9 @@ impl StepExecutor {
                 .model_override
                 .as_ref()
                 .map(|m| format!("{}/{}", m.provider, m.name));
-            let result = Self::execute_once(&step, &context, &hero, model.as_deref(), &tx).await;
+            let result =
+                Self::execute_once(&step, &context, hero, flow_executor, model.as_deref(), &tx)
+                    .await;
 
             let event = match result {
                 Ok(output) => WorkflowEvent::StepCompleted {
@@ -76,15 +83,27 @@ impl StepExecutor {
     async fn execute_once(
         step: &Step,
         context: &Value,
-        hero: &tavern_hero::TavernHero,
+        hero: Option<Arc<tavern_hero::TavernHero>>,
+        flow_executor: Option<Arc<tokio::sync::Mutex<dyn FlowStepExecutor>>>,
         model_override: Option<&str>,
         tx: &mpsc::Sender<WorkflowEvent>,
     ) -> Result<Value, String> {
+        // V0.4: Flow 哨兵路由
+        if step.agent_id == FLOW_AGENT_ID {
+            let executor = flow_executor
+                .as_ref()
+                .ok_or_else(|| "flow executor not configured".to_string())?;
+            let mut guard = executor.lock().await;
+            let input = resolve_flow_input(step, context);
+            return guard.execute_step(&step.task, input).await;
+        }
+
         let task = match render_template(&step.task, context) {
             Ok(t) => t,
             Err(e) => return Err(format!("template render failed: {}", e)),
         };
 
+        let hero = hero.ok_or_else(|| "hero not configured".to_string())?;
         let timeout = step.timeout.unwrap_or(300);
         let model = model_override.unwrap_or(&step.agent_id).to_string();
 
@@ -147,4 +166,24 @@ impl StepExecutor {
             }
         }
     }
+}
+
+/// 为 Flow step 解析输入：取第一个依赖 step 的输出。
+fn resolve_flow_input(step: &Step, context: &Value) -> Value {
+    if let Some(ref router) = step.router {
+        return context
+            .get(&router.upstream)
+            .cloned()
+            .unwrap_or(Value::Null);
+    }
+    let upstreams: Vec<&str> = if !step.depends_on.is_empty() {
+        step.depends_on.iter().map(|s| s.as_str()).collect()
+    } else {
+        step.or_depends_on.iter().map(|s| s.as_str()).collect()
+    };
+    upstreams
+        .first()
+        .and_then(|id| context.get(id))
+        .cloned()
+        .unwrap_or(Value::Null)
 }

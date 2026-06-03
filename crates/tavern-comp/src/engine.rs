@@ -10,11 +10,13 @@ use crate::context::render_template;
 use crate::error::CompError;
 use crate::event::{SignalAction, WorkflowEvent};
 use crate::executor::StepExecutor;
+use crate::flow_executor::FlowStepExecutor;
 use crate::instance::{InstanceState, InstanceStatus};
 use crate::store::{EventStore, MemoryEventStore};
 use crate::timer::TimerRegistry;
 use crate::workflow::{
-    ManagerConfig, Process, SignalTimeoutAction, StepStatus, Workflow, WorkflowResult,
+    FLOW_AGENT_ID, ManagerConfig, Process, SignalTimeoutAction, StepStatus, Workflow,
+    WorkflowResult,
 };
 
 use super::handle::ExecutionHandle;
@@ -22,6 +24,9 @@ use super::handle::ExecutionHandle;
 // ── Phase 1 常量 ──
 const MAX_MANAGER_LOOPS: usize = 100;
 const PLANNING_TIMEOUT_SECS: u64 = 60;
+
+// ── V0.4: Router 常量 ──
+const ROUTER_LABEL_PREFIX: &str = "__label__";
 
 // ── 辅助类型 ──
 
@@ -99,6 +104,18 @@ fn parse_json_with_retry<T: serde::de::DeserializeOwned>(raw: &str) -> Result<T,
     serde_json::from_str(&json_str).map_err(|e| format!("invalid JSON: {}", e))
 }
 
+/// 从 Router step 的输出中提取 label(s)。
+fn extract_labels_from_output(output: &Value) -> Vec<String> {
+    match output {
+        Value::String(s) => vec![s.clone()],
+        Value::Array(arr) => arr
+            .iter()
+            .filter_map(|v| v.as_str().map(String::from))
+            .collect(),
+        _ => vec![],
+    }
+}
+
 #[derive(Debug)]
 pub enum Action {
     ScheduleSteps(Vec<String>),
@@ -110,18 +127,32 @@ pub enum Action {
 /// Workflow 执行引擎，V2 重构为事件溯源状态机解释器。
 #[derive(Clone)]
 pub struct WorkflowEngine {
-    hero: Arc<tavern_hero::TavernHero>,
+    /// Agent 执行器。None = Flow 模式（不使用 Hero）。
+    hero: Option<Arc<tavern_hero::TavernHero>>,
     store: Arc<dyn EventStore>,
     max_concurrency: usize,
+    /// Flow 方法执行器（None = 纯 Comp 模式）
+    flow_executor: Option<Arc<tokio::sync::Mutex<dyn FlowStepExecutor>>>,
 }
 
 impl WorkflowEngine {
     /// 初始化，注入 TavernHero，默认使用内存事件存储。
     pub fn new(hero: Arc<tavern_hero::TavernHero>) -> Self {
         Self {
-            hero,
+            hero: Some(hero),
             store: Arc::new(MemoryEventStore::new()),
             max_concurrency: usize::MAX,
+            flow_executor: None,
+        }
+    }
+
+    /// Flow 模式：不依赖 TavernHero，使用 FlowStepExecutor 执行方法步骤。
+    pub fn new_with_flow_executor(executor: Arc<tokio::sync::Mutex<dyn FlowStepExecutor>>) -> Self {
+        Self {
+            hero: None,
+            store: Arc::new(MemoryEventStore::new()),
+            max_concurrency: 1,
+            flow_executor: Some(executor),
         }
     }
 
@@ -147,30 +178,44 @@ impl WorkflowEngine {
         workflow.validate_static()?;
 
         for step in &workflow.steps {
-            if self.hero.get_agent(&step.agent_id).await.is_none() {
-                return Err(CompError::AgentNotFound {
-                    id: step.agent_id.clone(),
-                });
+            if step.agent_id != FLOW_AGENT_ID {
+                if let Some(ref hero) = self.hero {
+                    if hero.get_agent(&step.agent_id).await.is_none() {
+                        return Err(CompError::AgentNotFound {
+                            id: step.agent_id.clone(),
+                        });
+                    }
+                }
             }
         }
 
         // Hierarchical: 额外检查 Manager agent
         if let Process::Hierarchical(cfg) = &workflow.process {
-            if self.hero.get_agent(&cfg.agent_id).await.is_none() {
-                return Err(CompError::AgentNotFound {
-                    id: cfg.agent_id.clone(),
-                });
+            if let Some(ref hero) = self.hero {
+                if hero.get_agent(&cfg.agent_id).await.is_none() {
+                    return Err(CompError::AgentNotFound {
+                        id: cfg.agent_id.clone(),
+                    });
+                }
             }
         }
 
         // Planning: 检查 planning_agent
         if let Some(ref planning) = workflow.planning {
             if planning.enabled {
+                if self.hero.is_none() {
+                    return Err(CompError::ConfigParse {
+                        path: "<workflow>".into(),
+                        reason: "planning requires hero agent (not available in Flow-only mode)"
+                            .into(),
+                    });
+                }
+                let hero = self.hero.as_ref().unwrap();
                 let agent_id = planning
                     .planning_agent
                     .as_deref()
                     .unwrap_or(&workflow.steps[0].agent_id);
-                if self.hero.get_agent(agent_id).await.is_none() {
+                if hero.get_agent(agent_id).await.is_none() {
                     return Err(CompError::PlanningAgentNotRegistered {
                         id: agent_id.to_string(),
                     });
@@ -266,6 +311,10 @@ impl WorkflowEngine {
     // ── Planning Phase ──
 
     async fn run_planning_phase(&self, workflow: &Workflow) -> Result<Workflow, CompError> {
+        let hero = self.hero.as_ref().ok_or_else(|| CompError::ConfigParse {
+            path: "<workflow>".into(),
+            reason: "planning requires hero agent".into(),
+        })?;
         let planning = workflow.planning.as_ref().unwrap();
         let planner_agent_id = planning
             .planning_agent
@@ -276,7 +325,7 @@ impl WorkflowEngine {
 
         let raw = tokio::time::timeout(
             std::time::Duration::from_secs(PLANNING_TIMEOUT_SECS),
-            self.hero.execute(planner_agent_id, &planner_prompt, None),
+            hero.execute(planner_agent_id, &planner_prompt, None),
         )
         .await
         .map_err(|_| CompError::PlanningError {
@@ -371,17 +420,19 @@ impl WorkflowEngine {
         let mut agent_desc = String::new();
         let seen: std::collections::HashSet<&str> =
             workflow.steps.iter().map(|s| s.agent_id.as_str()).collect();
-        for agent_id in &seen {
-            if let Some(agent) = self.hero.get_agent(agent_id).await {
-                let instr_summary: String = agent.instructions.chars().take(300).collect();
-                let skills: Vec<String> = agent.skills.iter().map(|s| s.id.clone()).collect();
-                agent_desc.push_str(&format!(
-                    "- {}: {}\n  Skills: {}\n  Instructions summary: {}\n",
-                    agent_id,
-                    agent.description.as_deref().unwrap_or("no description"),
-                    skills.join(", "),
-                    instr_summary
-                ));
+        if let Some(ref hero) = self.hero {
+            for agent_id in &seen {
+                if let Some(agent) = hero.get_agent(agent_id).await {
+                    let instr_summary: String = agent.instructions.chars().take(300).collect();
+                    let skills: Vec<String> = agent.skills.iter().map(|s| s.id.clone()).collect();
+                    agent_desc.push_str(&format!(
+                        "- {}: {}\n  Skills: {}\n  Instructions summary: {}\n",
+                        agent_id,
+                        agent.description.as_deref().unwrap_or("no description"),
+                        skills.join(", "),
+                        instr_summary
+                    ));
+                }
             }
         }
 
@@ -449,8 +500,10 @@ impl WorkflowEngine {
                      or {{\"action\": \"done\"}}",
                     first_err
                 );
-                let retry_raw = self
-                    .hero
+                let hero = self.hero.as_ref().ok_or_else(|| CompError::ManagerError {
+                    reason: "hero not configured for manager retry".to_string(),
+                })?;
+                let retry_raw = hero
                     .execute(manager_agent_id, &retry_prompt, None)
                     .await
                     .map_err(|e| CompError::ManagerError {
@@ -543,8 +596,12 @@ impl WorkflowEngine {
     ) -> Result<(), CompError> {
         let (internal_tx, mut internal_rx) = mpsc::channel::<WorkflowEvent>(64);
 
-        let executor =
-            StepExecutor::new(self.hero.clone(), internal_tx.clone(), self.max_concurrency);
+        let executor = StepExecutor::new(
+            self.hero.clone(),
+            self.flow_executor.clone(),
+            internal_tx.clone(),
+            self.max_concurrency,
+        );
 
         let timer_registry = TimerRegistry::new(internal_tx.clone());
 
@@ -592,8 +649,21 @@ impl WorkflowEngine {
                             Some(event) = internal_rx.recv() => {
                                 self.apply_and_persist(&instance_id, event.clone(), &mut state).await?;
 
-                                if let WorkflowEvent::StepCompleted { step_id, .. } = &event {
+                                if let WorkflowEvent::StepCompleted { step_id, output, .. } = &event {
                                     if let Some(step) = workflow.steps.iter().find(|s| &s.id == step_id) {
+                                        // V0.4: Router 路由处理
+                                        if let Some(ref router) = step.router {
+                                            let upstream_output = state.context.get(&router.upstream).cloned().unwrap_or(Value::Null);
+                                            let labels = extract_labels_from_output(output);
+                                            for label in &labels {
+                                                let label_key = format!("{}{}", ROUTER_LABEL_PREFIX, label);
+                                                if let Some(obj) = state.context.as_object_mut() {
+                                                    obj.insert(label_key.clone(), upstream_output.clone());
+                                                }
+                                                state.completed_steps.insert(label_key);
+                                            }
+                                        }
+
                                         if let Some(ref signal_name) = step.wait_for_signal {
                                             let wait_event = WorkflowEvent::SignalWaitStarted {
                                                 step_id: step_id.clone(),
@@ -891,8 +961,12 @@ impl WorkflowEngine {
             .await?;
 
         let (internal_tx, mut internal_rx) = mpsc::channel::<WorkflowEvent>(64);
-        let executor =
-            StepExecutor::new(self.hero.clone(), internal_tx.clone(), self.max_concurrency);
+        let executor = StepExecutor::new(
+            self.hero.clone(),
+            self.flow_executor.clone(),
+            internal_tx.clone(),
+            self.max_concurrency,
+        );
         let timer_registry = TimerRegistry::new(internal_tx.clone());
 
         let mut completed_tasks: Vec<CompletedTask> = Vec::new();
@@ -954,8 +1028,10 @@ impl WorkflowEngine {
                     plan_overview.as_deref(),
                 ).await;
 
-                let manager_result = self
-                    .hero
+                let hero = self.hero.as_ref().ok_or_else(|| CompError::ManagerError {
+                    reason: "hero not configured for manager".to_string(),
+                })?;
+                let manager_result = hero
                     .execute(&manager_config.agent_id, &prompt, None)
                     .await;
 
@@ -987,12 +1063,18 @@ impl WorkflowEngine {
                                         ),
                                     })?;
 
-                                if self.hero.get_agent(&agent_id).await.is_none() {
+                                if let Some(ref hero) = self.hero {
+                                    if hero.get_agent(&agent_id).await.is_none() {
+                                        return Err(CompError::ManagerError {
+                                            reason: format!(
+                                                "Manager returned unknown agent_id: {}",
+                                                agent_id
+                                            ),
+                                        });
+                                    }
+                                } else {
                                     return Err(CompError::ManagerError {
-                                        reason: format!(
-                                            "Manager returned unknown agent_id: {}",
-                                            agent_id
-                                        ),
+                                        reason: "hero not configured for hierarchical".to_string(),
                                     });
                                 }
 
