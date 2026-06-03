@@ -31,7 +31,8 @@ pub fn build_dag_maps(workflow: &Workflow) -> DagMaps {
                 .iter()
                 .all(|u| u.starts_with("__label__"));
             if all_labels {
-                // 纯 label 依赖：入度为 0（静态无前置，运行时 Router 触发）
+                // 纯 label 依赖：入度为 0（无静态前置，运行时 Router 触发）
+                // decide_next_action 中额外检查 label 是否已出现在 completed_steps
                 in_degree.insert(step.id.clone(), 0);
             } else {
                 // 混合或纯方法依赖：入度 = 1（任一上游完成即触发）

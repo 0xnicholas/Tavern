@@ -1,7 +1,9 @@
 //! tavern-flow-macros — proc-macro DSL for method-level event-driven orchestration.
+//! V0.4: Expands to `tavern_comp::Workflow` + `tavern_comp::FlowStepExecutor`.
 
 use proc_macro::TokenStream;
 use quote::{format_ident, quote};
+use std::collections::HashSet;
 use syn::{
     Attribute, DeriveInput, FnArg, ImplItem, ItemImpl, Pat, Type, parse_macro_input,
     punctuated::Punctuated, spanned::Spanned, token::Comma,
@@ -130,7 +132,7 @@ pub fn router(_attr: TokenStream, item: TokenStream) -> TokenStream {
     item
 }
 
-/// `#[flow_impl(crate = "path")]` — generate FlowDispatch + Flow trait impls.
+/// `#[flow_impl(crate = "path")]` — generate FlowStepExecutor + __workflow_definition + run().
 #[proc_macro_attribute]
 pub fn flow_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
     let args = parse_macro_input!(attr with Punctuated::<syn::Meta, Comma>::parse_terminated);
@@ -147,7 +149,20 @@ pub fn flow_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
         }
     };
 
-    let mut methods_info: Vec<proc_macro2::TokenStream> = Vec::new();
+    // Collect all method names for prefix auto-detection
+    let method_names: HashSet<String> = input
+        .items
+        .iter()
+        .filter_map(|item| {
+            if let ImplItem::Fn(method) = item {
+                Some(method.sig.ident.to_string())
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    let mut workflow_steps: Vec<proc_macro2::TokenStream> = Vec::new();
     let mut dispatch_arms: Vec<proc_macro2::TokenStream> = Vec::new();
     let mut pass_through: Vec<proc_macro2::TokenStream> = Vec::new();
     let mut wrappers: Vec<proc_macro2::TokenStream> = Vec::new();
@@ -164,45 +179,74 @@ pub fn flow_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
                     let name_str = method_name.to_string();
                     let wrapper_name = format_ident!("__flow_wrapper_{}", name_str);
 
-                    let is_start = matches!(flow_attr, Some(FlowMethodAttr::Start));
                     let is_router = matches!(flow_attr, Some(FlowMethodAttr::Router(_)));
 
-                    // Build listen_type from flow_attr
-                    let listen_type_tokens = match &flow_attr {
+                    // ── Build Step for __workflow_definition ──
+                    let step_id = if is_router {
+                        format!("__router__{}", name_str)
+                    } else {
+                        name_str.clone()
+                    };
+
+                    let (depends_on, or_depends_on, router_config) = match &flow_attr {
+                        Some(FlowMethodAttr::Start) => {
+                            (vec![], vec![], None)
+                        }
                         Some(FlowMethodAttr::Listen(ListenTarget::Single(name))) => {
-                            let name = name.clone();
-                            quote! { #crate_path::ListenType::Single(#name.to_string()) }
+                            if method_names.contains(name) {
+                                // Direct method dependency → OR with no prefix
+                                (vec![], vec![name.clone()], None)
+                            } else {
+                                // Router label → OR with __label__ prefix
+                                (vec![], vec![format!("__label__{}", name)], None)
+                            }
                         }
                         Some(FlowMethodAttr::Listen(ListenTarget::Or(names))) => {
-                            let names: Vec<String> = names.iter().map(|n| n.to_string()).collect();
-                            quote! { #crate_path::ListenType::Or(vec![#(#names.to_string()),*]) }
+                            // OR always uses __label__ prefix (router labels)
+                            let prefixed: Vec<String> = names.iter()
+                                .map(|n| format!("__label__{}", n))
+                                .collect();
+                            (vec![], prefixed, None)
                         }
                         Some(FlowMethodAttr::Listen(ListenTarget::And(names))) => {
-                            let names: Vec<String> = names.iter().map(|n| n.to_string()).collect();
-                            quote! { #crate_path::ListenType::And(vec![#(#names.to_string()),*]) }
+                            // AND always uses direct method names (no prefix)
+                            (names.clone(), vec![], None)
                         }
-                        _ => {
-                            quote! { #crate_path::ListenType::Single(String::new()) }
+                        Some(FlowMethodAttr::Router(upstream)) => {
+                            (vec![upstream.clone()], vec![],
+                             Some(quote! { Some(tavern_comp::RouterConfig { upstream: #upstream.to_string() }) }))
                         }
+                        None => unreachable!(),
                     };
 
-                    let router_upstream = match &flow_attr {
-                        Some(FlowMethodAttr::Router(upstream)) => upstream.clone(),
-                        _ => String::new(),
+                    let router_config_tokens = router_config.unwrap_or(quote! { None });
+                    let output_key_tokens = if is_router {
+                        quote! { None }
+                    } else {
+                        quote! { Some(#step_id.to_string()) }
                     };
 
-                    methods_info.push(quote! {
-                        #crate_path::MethodInfo {
-                            name: #name_str.to_string(),
-                            is_start: #is_start,
-                            is_router: #is_router,
-                            router_for: if #is_router { Some(#router_upstream.to_string()) } else { None },
-                            listen_type: #listen_type_tokens,
-                            breakpoint: false,
+                    let depends_on_tokens: Vec<proc_macro2::TokenStream> = depends_on.iter()
+                        .map(|d| quote! { #d.to_string() })
+                        .collect();
+                    let or_depends_on_tokens: Vec<proc_macro2::TokenStream> = or_depends_on.iter()
+                        .map(|d| quote! { #d.to_string() })
+                        .collect();
+
+                    workflow_steps.push(quote! {
+                        tavern_comp::Step {
+                            id: #step_id.to_string(),
+                            agent_id: tavern_comp::FLOW_AGENT_ID.to_string(),
+                            task: #name_str.to_string(),
+                            depends_on: vec![#(#depends_on_tokens),*],
+                            or_depends_on: vec![#(#or_depends_on_tokens),*],
+                            output_key: #output_key_tokens,
+                            router: #router_config_tokens,
+                            ..tavern_comp::Step::default()
                         }
                     });
 
-                    // Build wrapper method: async fn wrapper(&mut self, args) -> Result<Value, FlowError>
+                    // ── Build wrapper inputs ──
                     let mut wrapper_inputs: Vec<FnArg> = Vec::new();
                     let mut wrapper_args: Vec<proc_macro2::TokenStream> = Vec::new();
                     let mut has_input = false;
@@ -225,7 +269,7 @@ pub fn flow_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
                         quote! { self.#method_name() }
                     };
 
-                    // Detect router return type
+                    // Detect router return type (Vec<String> vs String)
                     let router_returns_vec = is_router && {
                         if let syn::ReturnType::Type(_, ty) = &method.sig.output {
                             if let Type::Path(tp) = ty.as_ref() {
@@ -239,7 +283,7 @@ pub fn flow_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
                         }
                     };
 
-                    // Generate wrapper (router vs normal)
+                    // Generate wrapper (returns Result<Value, String> for FlowStepExecutor)
                     let wrapper = if is_router {
                         let body = if router_returns_vec {
                             quote! { let labels: Vec<String> = #call.await; Ok(serde_json::Value::Array(labels.into_iter().map(serde_json::Value::String).collect())) }
@@ -247,43 +291,47 @@ pub fn flow_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
                             quote! { let label = #call.await; Ok(serde_json::Value::String(label)) }
                         };
                         if has_input {
-                            quote! { async fn #wrapper_name(&mut self, #(#wrapper_inputs),*) -> std::result::Result<serde_json::Value, #crate_path::FlowError> { #body } }
+                            quote! { async fn #wrapper_name(&mut self, #(#wrapper_inputs),*) -> std::result::Result<serde_json::Value, String> { #body } }
                         } else {
-                            quote! { async fn #wrapper_name(&mut self) -> std::result::Result<serde_json::Value, #crate_path::FlowError> { #body } }
+                            quote! { async fn #wrapper_name(&mut self) -> std::result::Result<serde_json::Value, String> { #body } }
                         }
                     } else if has_input {
                         quote! {
-                            async fn #wrapper_name(&mut self, #(#wrapper_inputs),*) -> std::result::Result<serde_json::Value, #crate_path::FlowError> {
-                                let result = #call.await?;
-                                Ok(serde_json::to_value(result).map_err(|e| #crate_path::FlowError::Serialization(e.to_string()))?)
+                            async fn #wrapper_name(&mut self, #(#wrapper_inputs),*) -> std::result::Result<serde_json::Value, String> {
+                                let result = #call.await.map_err(|e| e.to_string())?;
+                                Ok(serde_json::to_value(result).map_err(|e| e.to_string())?)
                             }
                         }
                     } else {
                         quote! {
-                            async fn #wrapper_name(&mut self) -> std::result::Result<serde_json::Value, #crate_path::FlowError> {
-                                let result = #call.await?;
-                                Ok(serde_json::to_value(result).map_err(|e| #crate_path::FlowError::Serialization(e.to_string()))?)
+                            async fn #wrapper_name(&mut self) -> std::result::Result<serde_json::Value, String> {
+                                let result = #call.await.map_err(|e| e.to_string())?;
+                                Ok(serde_json::to_value(result).map_err(|e| e.to_string())?)
                             }
                         }
                     };
                     wrappers.push(wrapper);
 
-                    // Generate dispatch arm (call wrapper)
+                    // ── Generate dispatch arm for FlowStepExecutor ──
+                    let dispatch_step_id = if is_router {
+                        format!("__router__{}", name_str)
+                    } else {
+                        name_str.clone()
+                    };
+
                     let dispatch_arm = if has_input {
                         quote! {
-                            #name_str => {
+                            #dispatch_step_id => {
                                 let parsed: std::result::Result<_, _> = serde_json::from_value(input);
                                 match parsed {
                                     Ok(val) => Box::pin(self.#wrapper_name(val)),
-                                    Err(e) => Box::pin(std::future::ready(Err(
-                                        #crate_path::FlowError::Serialization(e.to_string())
-                                    ))),
+                                    Err(e) => Box::pin(std::future::ready(Err(e.to_string()))),
                                 }
                             }
                         }
                     } else {
                         quote! {
-                            #name_str => Box::pin(self.#wrapper_name())
+                            #dispatch_step_id => Box::pin(self.#wrapper_name())
                         }
                     };
                     dispatch_arms.push(dispatch_arm);
@@ -306,27 +354,44 @@ pub fn flow_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
         impl #struct_name {
             #(#pass_through)*
             #(#wrappers)*
-        }
 
-        impl #crate_path::FlowDispatch for #struct_name {
-            fn dispatch(
-                &mut self,
-                method: &str,
-                input: serde_json::Value,
-            ) -> std::pin::Pin<Box<dyn std::future::Future<Output = std::result::Result<serde_json::Value, #crate_path::FlowError>> + Send + '_>> {
-                match method {
-                    #(#dispatch_arms),*,
-                    _ => Box::pin(std::future::ready(Err(#crate_path::FlowError::MethodNotFound {
-                        name: method.to_string(),
-                    }))),
+            /// V0.4: Build the workflow definition from proc-macro attributes.
+            fn __workflow_definition() -> tavern_comp::Workflow {
+                tavern_comp::Workflow {
+                    id: stringify!(#struct_name).to_string(),
+                    name: stringify!(#struct_name).to_string(),
+                    description: None,
+                    steps: vec![#(#workflow_steps),*],
+                    inputs: vec![],
+                    outputs: vec![],
+                    process: tavern_comp::Process::Sequential,
+                    planning: None,
+                    webhook: None,
+                    schedule: None,
+                    schedule_inputs: serde_json::Value::Null,
                 }
+            }
+
+            /// V0.4: Run the flow synchronously via the Comp engine.
+            pub async fn run(self, inputs: serde_json::Value) -> std::result::Result<serde_json::Value, #crate_path::FlowError> {
+                let workflow = Self::__workflow_definition();
+                let executor = std::sync::Arc::new(tokio::sync::Mutex::new(self));
+                let engine = tavern_comp::WorkflowEngine::new_with_flow_executor(executor);
+                let result = engine.run(&workflow, inputs).await
+                    .map_err(|e| #crate_path::FlowError::Other(e.to_string()))?;
+                Ok(result.outputs)
             }
         }
 
-        impl #crate_path::Flow for #struct_name {
-            fn metadata() -> #crate_path::FlowMetadata {
-                #crate_path::FlowMetadata {
-                    methods: vec![#(#methods_info),*],
+        impl tavern_comp::FlowStepExecutor for #struct_name {
+            fn execute_step(
+                &mut self,
+                step_id: &str,
+                input: serde_json::Value,
+            ) -> std::pin::Pin<Box<dyn std::future::Future<Output = std::result::Result<serde_json::Value, String>> + Send + '_>> {
+                match step_id {
+                    #(#dispatch_arms),*,
+                    _ => Box::pin(std::future::ready(Err(format!("method not found: {}", step_id)))),
                 }
             }
         }
@@ -335,7 +400,7 @@ pub fn flow_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
     expanded.into()
 }
 
-/// 从 `#[flow_impl(crate = "...")]` 中提取 crate 路径。
+/// Extract crate path from `#[flow_impl(crate = "...")]`.
 fn extract_crate_path(args: &[syn::Meta]) -> syn::Path {
     for meta in args {
         if let syn::Meta::NameValue(nv) = meta {

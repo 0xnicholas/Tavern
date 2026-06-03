@@ -1631,3 +1631,108 @@ async fn test_or_dependency_first_upstream_triggers() {
         "step c should have output"
     );
 }
+
+// ── V0.4: Flow router end-to-end test ──
+
+use crate::flow_executor::FlowStepExecutor;
+use std::pin::Pin;
+use std::future::Future;
+
+struct RouterTestExec;
+impl FlowStepExecutor for RouterTestExec {
+    fn execute_step(
+        &mut self,
+        step_id: &str,
+        input: Value,
+    ) -> Pin<Box<dyn Future<Output = Result<Value, String>> + Send + '_>> {
+        match step_id {
+            "source" => Box::pin(async { Ok(Value::String("draft_content".to_string())) }),
+            "__router__gate" => {
+                Box::pin(async move {
+                    let s = input.as_str().unwrap_or("");
+                    if s.len() > 5 {
+                        Ok(Value::String("approved".to_string()))
+                    } else {
+                        Ok(Value::String("rejected".to_string()))
+                    }
+                })
+            },
+            "publish" => Box::pin(async move {
+                let s = input.as_str().unwrap_or("");
+                Ok(Value::String(format!("published: {}", s)))
+            }),
+            unknown => {
+                let unknown = unknown.to_string();
+                Box::pin(async move { Err(format!("unknown: {}", unknown)) })
+            },
+        }
+    }
+}
+
+#[tokio::test]
+async fn test_flow_router_end_to_end() {
+    use crate::workflow::RouterConfig;
+
+    let executor = std::sync::Arc::new(tokio::sync::Mutex::new(RouterTestExec));
+    let engine = WorkflowEngine::new_with_flow_executor(executor);
+
+    let workflow = Workflow {
+        id: "router_test".into(),
+        name: "test".into(),
+        description: None,
+        steps: vec![
+            Step {
+                id: "source".into(),
+                agent_id: FLOW_AGENT_ID.into(),
+                task: "source".into(),
+                output_key: Some("source".into()),
+                ..Step::default()
+            },
+            Step {
+                id: "__router__gate".into(),
+                agent_id: FLOW_AGENT_ID.into(),
+                task: "__router__gate".into(),
+                depends_on: vec!["source".into()],
+                router: Some(RouterConfig {
+                    upstream: "source".into(),
+                }),
+                ..Step::default()
+            },
+            Step {
+                id: "publish".into(),
+                agent_id: FLOW_AGENT_ID.into(),
+                task: "publish".into(),
+                or_depends_on: vec!["__label__approved".into()],
+                output_key: Some("publish".into()),
+                ..Step::default()
+            },
+        ],
+        inputs: vec![],
+        outputs: vec![],
+        process: Process::Sequential,
+        planning: None,
+        webhook: None,
+        schedule: None,
+        schedule_inputs: Value::Null,
+    };
+
+    let result = engine.run(&workflow, json!({})).await.unwrap();
+
+    // Verify all 3 steps completed
+    assert!(
+        matches!(result.step_results["source"].status, StepStatus::Completed),
+        "source should be Completed"
+    );
+    assert!(
+        matches!(result.step_results["__router__gate"].status, StepStatus::Completed),
+        "__router__gate should be Completed"
+    );
+    assert!(
+        matches!(result.step_results["publish"].status, StepStatus::Completed),
+        "publish should be Completed"
+    );
+    assert_eq!(
+        result.step_results["publish"].output.as_ref().unwrap(),
+        &json!("published: draft_content")
+    );
+}

@@ -95,7 +95,7 @@ impl StepExecutor {
                 .ok_or_else(|| "flow executor not configured".to_string())?;
             let mut guard = executor.lock().await;
             let input = resolve_flow_input(step, context);
-            return guard.execute_step(&step.task, input).await;
+            return guard.execute_step(&step.id, input).await;
         }
 
         let task = match render_template(&step.task, context) {
@@ -171,19 +171,21 @@ impl StepExecutor {
 /// 为 Flow step 解析输入：取第一个依赖 step 的输出。
 fn resolve_flow_input(step: &Step, context: &Value) -> Value {
     if let Some(ref router) = step.router {
-        return context
+        let result = context
             .get(&router.upstream)
             .cloned()
             .unwrap_or(Value::Null);
+        return result;
     }
     let upstreams: Vec<&str> = if !step.depends_on.is_empty() {
         step.depends_on.iter().map(|s| s.as_str()).collect()
     } else {
         step.or_depends_on.iter().map(|s| s.as_str()).collect()
     };
-    upstreams
+    let result = upstreams
         .first()
         .and_then(|id| context.get(id))
         .cloned()
-        .unwrap_or(Value::Null)
+        .unwrap_or(Value::Null);
+    result
 }

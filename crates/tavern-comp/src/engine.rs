@@ -105,6 +105,30 @@ fn parse_json_with_retry<T: serde::de::DeserializeOwned>(raw: &str) -> Result<T,
 }
 
 /// 从 Router step 的输出中提取 label(s)。
+/// 返回 true 表示 step 是纯 label OR step 且其 label 尚未被 Router 注入。
+/// 这类 step 在 decide_next_action 中应被排除（等待 Router）。
+fn is_pure_label_or_waiting(
+    step: &crate::workflow::Step,
+    or_steps: &std::collections::HashSet<String>,
+    completed_steps: &std::collections::HashSet<String>,
+) -> bool {
+    if !or_steps.contains(&step.id) {
+        return false;
+    }
+    let all_labels = step
+        .or_depends_on
+        .iter()
+        .all(|u| u.starts_with("__label__"));
+    if !all_labels {
+        return false;
+    }
+    // Pure-label OR step: only ready if at least one label is in completed_steps
+    !step
+        .or_depends_on
+        .iter()
+        .any(|label| completed_steps.contains(label))
+}
+
 fn extract_labels_from_output(output: &Value) -> Vec<String> {
     match output {
         Value::String(s) => vec![s.clone()],
@@ -895,6 +919,8 @@ impl WorkflowEngine {
                     && !state.running_steps.contains(&s.id)
                     && !state.signal_blocked_steps.contains(&s.id)
                     && !state.scheduled_steps.contains(&s.id)
+                    // V0.4: Pure-label OR steps must wait for Router to inject label
+                    && !is_pure_label_or_waiting(s, &dag.or_steps, &state.completed_steps)
             })
             .map(|s| s.id.clone())
             .collect();
