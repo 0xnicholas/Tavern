@@ -168,10 +168,10 @@ impl PandariaRuntime {
                 let mut text = String::new();
                 if let Some(content) = last["content"].as_array() {
                     for part in content {
-                        if part["type"].as_str() == Some("text") {
-                            if let Some(t) = part["text"].as_str() {
-                                text.push_str(t);
-                            }
+                        if part["type"].as_str() == Some("text")
+                            && let Some(t) = part["text"].as_str()
+                        {
+                            text.push_str(t);
                         }
                     }
                 }
@@ -219,10 +219,11 @@ impl Runtime for PandariaRuntime {
 
         if let Ok(json_val) = serde_json::from_str::<serde_json::Value>(&response_text) {
             // If the JSON has only a "text" key, return just the text
-            if let Some(obj) = json_val.as_object() {
-                if obj.len() == 1 && obj.contains_key("text") {
-                    return Ok(obj["text"].clone());
-                }
+            if let Some(obj) = json_val.as_object()
+                && obj.len() == 1
+                && obj.contains_key("text")
+            {
+                return Ok(obj["text"].clone());
             }
             Ok(json_val)
         } else {

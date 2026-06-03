@@ -182,10 +182,10 @@ fn resolve_flow_input(step: &Step, context: &Value) -> Value {
     } else {
         step.or_depends_on.iter().map(|s| s.as_str()).collect()
     };
-    let result = upstreams
+
+    upstreams
         .first()
         .and_then(|id| context.get(id))
         .cloned()
-        .unwrap_or(Value::Null);
-    result
+        .unwrap_or(Value::Null)
 }

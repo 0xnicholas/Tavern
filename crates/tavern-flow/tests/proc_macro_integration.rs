@@ -1,8 +1,8 @@
 //! Smoke test: proc-macro generates FlowStepExecutor + __workflow_definition correctly.
 
-use tavern_flow::{Flow, FlowError, flow_impl};
-use tavern_comp::FlowStepExecutor;
 use serde_json::Value;
+use tavern_comp::FlowStepExecutor;
+use tavern_flow::{Flow, FlowError, flow_impl};
 
 // ── Test 1: Simple linear pipeline ──
 
@@ -44,7 +44,9 @@ fn test_linear_workflow_definition() {
 
 #[tokio::test]
 async fn test_linear_dispatch() {
-    let mut pipeline = LinearPipeline { value: String::new() };
+    let mut pipeline = LinearPipeline {
+        value: String::new(),
+    };
     let result = pipeline
         .execute_step("step_a", Value::Null)
         .await
@@ -60,14 +62,15 @@ async fn test_linear_dispatch() {
 
 #[tokio::test]
 async fn test_linear_run() {
-    let pipeline = LinearPipeline { value: String::new() };
+    let pipeline = LinearPipeline {
+        value: String::new(),
+    };
     let result = pipeline
         .run(serde_json::json!({}))
         .await
         .expect("run should succeed");
-    // When no explicit outputs defined, result is the outputs object (may be empty)
-    // The step completed — verified by no error
-    assert!(result.is_object());
+    // Returns terminal step output (step_b's "got: result_a")
+    assert_eq!(result, serde_json::json!("got: result_a"));
 }
 
 // ── Test 2: Router pipeline ──
@@ -140,10 +143,12 @@ async fn test_router_dispatch() {
 #[tokio::test]
 async fn test_router_run() {
     let pipeline = RouterPipeline { approved: false };
-    let result = pipeline.run(serde_json::json!({})).await.expect("run should succeed");
-    // Router flow completed successfully — verified by no error
-    assert!(result.is_object());
-    // Note: pipeline moved into run(), cannot check state after
+    let result = pipeline
+        .run(serde_json::json!({}))
+        .await
+        .expect("run should succeed");
+    // Returns terminal step output (on_approved's "published: draft_content")
+    assert_eq!(result, serde_json::json!("published: draft_content"));
 }
 
 // ── Test 3: OR combinator ──
@@ -179,7 +184,7 @@ fn test_or_workflow_definition() {
     let wf = OrPipeline::__workflow_definition();
     let consumer = &wf.steps[2];
     assert_eq!(consumer.id, "consumer");
-    assert_eq!(consumer.or_depends_on, vec!["__label__source_a", "__label__source_b"]);
+    assert_eq!(consumer.or_depends_on, vec!["source_a", "source_b"]);
     assert!(consumer.depends_on.is_empty());
 }
 
@@ -222,8 +227,125 @@ fn test_and_workflow_definition() {
 
 #[tokio::test]
 async fn test_unknown_method_returns_error() {
-    let mut pipeline = LinearPipeline { value: String::new() };
+    let mut pipeline = LinearPipeline {
+        value: String::new(),
+    };
     let result = pipeline.execute_step("nonexistent", Value::Null).await;
     assert!(result.is_err());
     assert!(result.unwrap_err().contains("method not found"));
+}
+
+// ── Phase I: End-to-end run() API tests ──
+
+#[derive(Flow)]
+struct SimplePipeline;
+
+#[flow_impl(crate = "tavern_flow")]
+impl SimplePipeline {
+    #[start]
+    async fn step_one(&mut self) -> Result<String, FlowError> {
+        Ok("hello".to_string())
+    }
+
+    #[listen("step_one")]
+    async fn step_two(&mut self, data: String) -> Result<String, FlowError> {
+        Ok(format!("got: {}", data))
+    }
+}
+
+#[tokio::test]
+async fn test_full_pipeline_run() {
+    let result = SimplePipeline.run(serde_json::json!({})).await.unwrap();
+    assert_eq!(result, serde_json::json!("got: hello"));
+}
+
+#[derive(Flow)]
+struct FullRouterPipeline;
+
+#[flow_impl(crate = "tavern_flow")]
+impl FullRouterPipeline {
+    #[start]
+    async fn source(&mut self) -> Result<String, FlowError> {
+        Ok("data".into())
+    }
+
+    #[router("source")]
+    async fn gate(&mut self, data: String) -> String {
+        if data.len() > 2 {
+            "approved".into()
+        } else {
+            "rejected".into()
+        }
+    }
+
+    #[listen("approved")]
+    async fn on_approved(&mut self, data: String) -> Result<String, FlowError> {
+        Ok(format!("OK: {}", data))
+    }
+}
+
+#[tokio::test]
+async fn test_router_pipeline_run() {
+    let result = FullRouterPipeline.run(serde_json::json!({})).await.unwrap();
+    assert_eq!(result, serde_json::json!("OK: data"));
+}
+
+#[derive(Flow)]
+struct OrFullPipeline;
+
+#[flow_impl(crate = "tavern_flow")]
+impl OrFullPipeline {
+    #[start]
+    async fn source_a(&mut self) -> Result<String, FlowError> {
+        Ok("first".into())
+    }
+
+    #[start]
+    async fn source_b(&mut self) -> Result<String, FlowError> {
+        Ok("second".into())
+    }
+
+    #[listen(or("source_a", "source_b"))]
+    async fn consumer(&mut self, data: String) -> Result<String, FlowError> {
+        Ok(format!("got: {}", data))
+    }
+}
+
+#[tokio::test]
+async fn test_or_pipeline_run() {
+    let result = OrFullPipeline.run(serde_json::json!({})).await.unwrap();
+    // consumer executes once with whichever source completes first
+    let s = result.as_str().unwrap();
+    assert!(
+        s == "got: first" || s == "got: second",
+        "expected 'got: first' or 'got: second', got '{}'",
+        s
+    );
+}
+
+#[derive(Flow)]
+struct AndFullPipeline;
+
+#[flow_impl(crate = "tavern_flow")]
+impl AndFullPipeline {
+    #[start]
+    async fn first(&mut self) -> Result<String, FlowError> {
+        Ok("alpha".into())
+    }
+
+    #[start]
+    async fn second(&mut self) -> Result<String, FlowError> {
+        Ok("beta".into())
+    }
+
+    #[listen(and("first", "second"))]
+    async fn after_both(&mut self) -> Result<String, FlowError> {
+        Ok("done".into())
+    }
+}
+
+#[tokio::test]
+async fn test_and_pipeline_run() {
+    let result = AndFullPipeline.run(serde_json::json!({})).await.unwrap();
+    assert_eq!(result, serde_json::json!("done"));
 }

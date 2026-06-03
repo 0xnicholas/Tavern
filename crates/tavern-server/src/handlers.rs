@@ -845,10 +845,10 @@ pub async fn reload_workflows_handler(
 
     // 先加载到临时 registry，成功后再原子替换，避免中间状态暴露空注册表
     let mut new_registry = tavern_comp::WorkflowRegistry::new();
-    if path.exists() {
-        if let Err(e) = new_registry.load_from_dir(path) {
-            return Err(map_comp_error(e));
-        }
+    if path.exists()
+        && let Err(e) = new_registry.load_from_dir(path)
+    {
+        return Err(map_comp_error(e));
     }
     let mut registry = state.registry.write().await;
     *registry = new_registry;
@@ -1017,7 +1017,7 @@ pub async fn list_breakpoints_handler(
             signal: String::new(),
         })
         .await
-        .map_err(|e| map_comp_error(e))?;
+        .map_err(map_comp_error)?;
 
     let mut breakpoints = Vec::new();
     for instance_id in statuses {
@@ -1025,7 +1025,7 @@ pub async fn list_breakpoints_handler(
             .event_store
             .read_stream(&instance_id)
             .await
-            .map_err(|e| map_comp_error(e))?;
+            .map_err(map_comp_error)?;
 
         for event in &events {
             if let tavern_comp::WorkflowEvent::BreakpointHit {
@@ -1068,7 +1068,7 @@ pub async fn clone_execution_handler(
     let info = engine
         .get_execution_info(&id)
         .await
-        .map_err(|e| map_comp_error(e))?;
+        .map_err(map_comp_error)?;
 
     // 仅允许克隆已完成或已失败的执行
     match &info.status {
@@ -1100,7 +1100,7 @@ pub async fn clone_execution_handler(
     let mut handle = engine
         .start(&workflow, info.inputs.clone())
         .await
-        .map_err(|e| map_comp_error(e))?;
+        .map_err(map_comp_error)?;
 
     let new_id = handle.id().to_string();
     let signal_tx = handle.signal_tx.clone();
@@ -1166,7 +1166,7 @@ pub async fn list_approvals_handler(
             signal: String::new(),
         })
         .await
-        .map_err(|e| map_comp_error(e))?;
+        .map_err(map_comp_error)?;
 
     let mut approvals = Vec::new();
     for instance_id in statuses {
@@ -1174,7 +1174,7 @@ pub async fn list_approvals_handler(
             .event_store
             .read_stream(&instance_id)
             .await
-            .map_err(|e| map_comp_error(e))?;
+            .map_err(map_comp_error)?;
 
         let mut workflow_id = String::new();
         let mut context = Value::Null;
@@ -1309,7 +1309,7 @@ async fn send_approval_signal(
         .event_store
         .read_stream(&execution_id)
         .await
-        .map_err(|e| map_comp_error(e))?;
+        .map_err(map_comp_error)?;
 
     if events.is_empty() {
         return Err(map_comp_error(CompError::InstanceNotFound {
@@ -1363,7 +1363,7 @@ async fn send_approval_signal(
         .event_store
         .append(&execution_id, event)
         .await
-        .map_err(|e| map_comp_error(e))?;
+        .map_err(map_comp_error)?;
 
     Ok(StatusCode::ACCEPTED)
 }
@@ -1376,10 +1376,13 @@ pub async fn list_schedules_handler(State(state): State<Arc<AppState>>) -> impl 
 }
 
 // ── Flow handlers ──
+// V0.4: Flow merged into Comp. Flow handlers are deprecated.
+// Flow pipelines are now executed via proc-macro .run() or WorkflowEngine.
+// TODO: Re-implement /flows endpoints using WorkflowRegistry + FlowStepExecutor.
 
 #[derive(Serialize)]
 pub struct FlowListResponse {
-    pub flows: Vec<tavern_flow::registry::FlowSummary>,
+    pub flows: Vec<serde_json::Value>,
 }
 
 #[derive(Deserialize)]
@@ -1400,126 +1403,31 @@ pub struct FlowStatusResponse {
     pub started_at: String,
 }
 
-pub async fn list_flows_handler(State(state): State<Arc<AppState>>) -> impl IntoResponse {
-    let flows = state.flow_registry.list().await;
-    Json(FlowListResponse { flows })
+pub async fn list_flows_handler() -> impl IntoResponse {
+    Json(FlowListResponse { flows: vec![] })
 }
 
-const MAX_FLOW_INPUT_SIZE: usize = 1024 * 1024; // 1 MiB
-
-pub async fn start_flow_handler(
-    State(state): State<Arc<AppState>>,
-    Path(id): Path<String>,
-    Json(body): Json<StartFlowRequest>,
-) -> Result<impl IntoResponse, (StatusCode, ApiError)> {
-    // Validate input size
-    if let Ok(serialized) = serde_json::to_vec(&body.inputs) {
-        if serialized.len() > MAX_FLOW_INPUT_SIZE {
-            return Err((
-                StatusCode::BAD_REQUEST,
-                ApiError {
-                    error: "InputTooLarge".to_string(),
-                    message: format!(
-                        "flow inputs exceed max size of {} bytes",
-                        MAX_FLOW_INPUT_SIZE
-                    ),
-                    status: StatusCode::BAD_REQUEST,
-                },
-            ));
-        }
-    }
-
-    let instance = state
-        .flow_registry
-        .create_instance(&id, body.inputs)
-        .await
-        .map_err(|e| {
-            (
-                StatusCode::NOT_FOUND,
-                ApiError {
-                    error: "flow not found".to_string(),
-                    message: e.to_string(),
-                    status: StatusCode::NOT_FOUND,
-                },
-            )
-        })?;
-
-    let (handle, ref_handle) = instance.start().await.map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            ApiError {
-                error: "flow start failed".to_string(),
-                message: e.to_string(),
-                status: StatusCode::INTERNAL_SERVER_ERROR,
-            },
-        )
-    })?;
-
-    let flow_id = ref_handle.flow_id.clone();
-    let handles = state.flow_handles.clone();
-    {
-        let mut h = handles.write().await;
-        h.insert(flow_id.clone(), ref_handle);
-    }
-
-    // Spawn cleanup
-    let cleanup_id = flow_id.clone();
-    tokio::spawn(async move {
-        let mut handle = handle;
-        let _ = handle.await_completion().await;
-        handles.write().await.remove(&cleanup_id);
-    });
-
-    Ok((
-        StatusCode::ACCEPTED,
-        Json(StartFlowResponse {
-            flow_id: flow_id.clone(),
-        }),
-    ))
+pub async fn start_flow_handler() -> impl IntoResponse {
+    (
+        StatusCode::NOT_IMPLEMENTED,
+        Json(
+            serde_json::json!({"error": "Flow REST API deprecated. Use proc-macro .run() or WorkflowEngine directly."}),
+        ),
+    )
 }
 
-pub async fn get_flow_status_handler(
-    State(state): State<Arc<AppState>>,
-    Path(flow_id): Path<String>,
-) -> Result<impl IntoResponse, (StatusCode, ApiError)> {
-    let handles = state.flow_handles.read().await;
-    let ref_handle = handles.get(&flow_id).ok_or_else(|| {
-        (
-            StatusCode::NOT_FOUND,
-            ApiError {
-                error: "flow not found".to_string(),
-                message: format!("flow '{}' not found", flow_id),
-                status: StatusCode::NOT_FOUND,
-            },
-        )
-    })?;
-
-    Ok(Json(FlowStatusResponse {
-        flow_id: ref_handle.flow_id.clone(),
-        flow_name: ref_handle.flow_name.clone(),
-        status: ref_handle.status_str().to_string(),
-        started_at: ref_handle.started_at.to_rfc3339(),
-    }))
+pub async fn get_flow_status_handler() -> impl IntoResponse {
+    (
+        StatusCode::NOT_IMPLEMENTED,
+        Json(
+            serde_json::json!({"error": "Flow status API deprecated. Use /executions/:id instead."}),
+        ),
+    )
 }
 
-pub async fn cancel_flow_handler(
-    State(state): State<Arc<AppState>>,
-    Path(flow_id): Path<String>,
-) -> Result<impl IntoResponse, (StatusCode, ApiError)> {
-    let handles = state.flow_handles.read().await;
-    match handles.get(&flow_id) {
-        Some(ref_handle) => {
-            ref_handle.cancel();
-            tracing::info!(flow_id = %flow_id, "flow cancellation requested");
-            Ok(StatusCode::ACCEPTED)
-        }
-        None => Err((
-            StatusCode::NOT_FOUND,
-            ApiError {
-                error: "flow not found".to_string(),
-                message: format!("flow '{}' not found", flow_id),
-                status: StatusCode::NOT_FOUND,
-            },
-        )),
-    }
+pub async fn cancel_flow_handler() -> impl IntoResponse {
+    (
+        StatusCode::NOT_IMPLEMENTED,
+        Json(serde_json::json!({"error": "Flow cancel API deprecated."})),
+    )
 }

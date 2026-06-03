@@ -124,12 +124,12 @@ pub struct ReplayOptions {
 
 impl ReplayOptions {
     pub fn validate(&self) -> Result<(), CompError> {
-        if let (Some(from), Some(to)) = (self.from, self.to) {
-            if from > to {
-                return Err(CompError::InvalidReplayRange {
-                    reason: "'from' must be before or equal to 'to'".to_string(),
-                });
-            }
+        if let (Some(from), Some(to)) = (self.from, self.to)
+            && from > to
+        {
+            return Err(CompError::InvalidReplayRange {
+                reason: "'from' must be before or equal to 'to'".to_string(),
+            });
         }
         Ok(())
     }

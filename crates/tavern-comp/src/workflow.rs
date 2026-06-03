@@ -362,7 +362,7 @@ pub struct RouterConfig {
 pub const FLOW_AGENT_ID: &str = "__flow__";
 
 /// 工作流中的一个执行步骤。
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
 pub struct Step {
     /// 步骤唯一标识（workflow 内唯一）
     pub id: String,
@@ -432,29 +432,6 @@ pub struct Step {
     /// V0.4: Router 配置——非 None 时此 step 执行后产生 label(s) 触发下游。
     #[serde(default)]
     pub router: Option<RouterConfig>,
-}
-
-impl Default for Step {
-    fn default() -> Self {
-        Self {
-            id: String::new(),
-            agent_id: String::new(),
-            task: String::new(),
-            depends_on: vec![],
-            output_key: None,
-            timeout: None,
-            retries: None,
-            retry_delay: None,
-            wait_for_signal: None,
-            signal_timeout: None,
-            signal_timeout_action: None,
-            breakpoint: false,
-            model_override: None,
-            expected_output: None,
-            or_depends_on: vec![],
-            router: None,
-        }
-    }
 }
 
 /// 外部输入参数定义。

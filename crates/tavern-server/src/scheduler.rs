@@ -42,7 +42,7 @@ impl CronField {
                 if value < *start {
                     return false;
                 }
-                (value - start) % interval == 0
+                (value - start).is_multiple_of(*interval)
             }
         }
     }
@@ -177,7 +177,7 @@ impl Scheduler {
             tick += 1;
 
             // 每 60 秒重新扫描 registry
-            if tick % 60 == 0 {
+            if tick.is_multiple_of(60) {
                 self.refresh_entries().await;
             }
 

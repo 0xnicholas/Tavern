@@ -55,6 +55,7 @@ impl RateLimiter {
     }
 
     /// 检查租户是否超限。未超限返回 Ok，超限返回 Err。
+    #[allow(clippy::result_unit_err)]
     pub fn check(&self, tenant_id: &str) -> Result<(), ()> {
         if !self.enabled {
             return Ok(());

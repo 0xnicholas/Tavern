@@ -55,18 +55,18 @@ async fn main() {
 
     let hero = TavernHero::new(runtime);
     let agent_config_path = Path::new(&config.server.agent_config_dir);
-    if agent_config_path.exists() {
-        if let Err(e) = hero.load_from_dir(agent_config_path).await {
-            tracing::error!("failed to load agent configs: {}", e);
-        }
+    if agent_config_path.exists()
+        && let Err(e) = hero.load_from_dir(agent_config_path).await
+    {
+        tracing::error!("failed to load agent configs: {}", e);
     }
 
     let mut registry = tavern_comp::WorkflowRegistry::new();
     let workflow_config_path = Path::new(&config.server.workflow_config_dir);
-    if workflow_config_path.exists() {
-        if let Err(e) = registry.load_from_dir(workflow_config_path) {
-            tracing::error!("failed to load workflow configs: {}", e);
-        }
+    if workflow_config_path.exists()
+        && let Err(e) = registry.load_from_dir(workflow_config_path)
+    {
+        tracing::error!("failed to load workflow configs: {}", e);
     }
 
     let hero = Arc::new(hero);
@@ -147,8 +147,6 @@ async fn main() {
         event_store: event_store.clone(),
         execution_handles: execution_handles.clone(),
         event_broadcasts: event_broadcasts.clone(),
-        flow_registry: Arc::new(tavern_flow::FlowRegistry::new()),
-        flow_handles: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
         rate_limiter: RateLimiter::new(
             config.rate_limit.enabled,
             config.rate_limit.default_rps,
@@ -834,8 +832,6 @@ instructions: 研究
             event_store: Arc::new(tavern_comp::MemoryEventStore::new()),
             execution_handles: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
             event_broadcasts: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
-            flow_registry: Arc::new(tavern_flow::FlowRegistry::new()),
-            flow_handles: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
             rate_limiter: RateLimiter::new(false, 10, std::collections::HashMap::new()),
             scheduler: Arc::new(Scheduler::new(
                 hero_for_scheduler,
@@ -1401,8 +1397,6 @@ instructions: 研究
             event_store: Arc::new(tavern_comp::MemoryEventStore::new()),
             execution_handles: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
             event_broadcasts: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
-            flow_registry: Arc::new(tavern_flow::FlowRegistry::new()),
-            flow_handles: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
             rate_limiter: RateLimiter::new(false, 10, std::collections::HashMap::new()),
             scheduler: Arc::new(Scheduler::new(
                 hero_for_scheduler,

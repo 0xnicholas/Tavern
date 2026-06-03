@@ -17,10 +17,10 @@ impl TimerRegistry {
         let tx = self.tx.clone();
         tokio::spawn(async move {
             let now = Utc::now();
-            if wake_at > now {
-                if let Ok(duration) = (wake_at - now).to_std() {
-                    tokio::time::sleep(duration).await;
-                }
+            if wake_at > now
+                && let Ok(duration) = (wake_at - now).to_std()
+            {
+                tokio::time::sleep(duration).await;
             }
             let event = WorkflowEvent::TimerFired { timer_id };
             if let Err(e) = tx.send(event).await {

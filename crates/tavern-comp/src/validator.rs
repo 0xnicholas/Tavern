@@ -92,16 +92,16 @@ pub fn validate_dag(workflow: &Workflow) -> Result<Vec<String>, CompError> {
             });
         }
         // V0.4: router upstream 必须在 depends_on 中
-        if let Some(ref router) = step.router {
-            if !step.depends_on.contains(&router.upstream) {
-                return Err(CompError::ConfigParse {
-                    path: "<workflow>".to_string(),
-                    reason: format!(
-                        "step '{}' has router.upstream '{}' which is not in depends_on",
-                        step.id, router.upstream
-                    ),
-                });
-            }
+        if let Some(ref router) = step.router
+            && !step.depends_on.contains(&router.upstream)
+        {
+            return Err(CompError::ConfigParse {
+                path: "<workflow>".to_string(),
+                reason: format!(
+                    "step '{}' has router.upstream '{}' which is not in depends_on",
+                    step.id, router.upstream
+                ),
+            });
         }
         for dep in &step.depends_on {
             if !step_ids.contains(dep) {

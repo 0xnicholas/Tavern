@@ -112,10 +112,10 @@ impl InstanceState {
             } => {
                 self.running_steps.remove(step_id);
                 self.completed_steps.insert(step_id.clone());
-                if let Some(key) = output_key {
-                    if let Some(obj) = self.context.as_object_mut() {
-                        obj.insert(key.clone(), output.clone());
-                    }
+                if let Some(key) = output_key
+                    && let Some(obj) = self.context.as_object_mut()
+                {
+                    obj.insert(key.clone(), output.clone());
                 }
                 self.step_results.insert(
                     step_id.clone(),
@@ -242,10 +242,10 @@ impl InstanceState {
                 self.pending_timers.remove(timer_id);
                 if timer_id.starts_with("retry_") {
                     // timer_id format: retry_{step_id}_{attempt}
-                    if let Some(rest) = timer_id.strip_prefix("retry_") {
-                        if let Some((step_id, _)) = rest.rsplit_once('_') {
-                            self.scheduled_steps.remove(step_id);
-                        }
+                    if let Some(rest) = timer_id.strip_prefix("retry_")
+                        && let Some((step_id, _)) = rest.rsplit_once('_')
+                    {
+                        self.scheduled_steps.remove(step_id);
                     }
                 }
             }

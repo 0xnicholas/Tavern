@@ -1635,8 +1635,8 @@ async fn test_or_dependency_first_upstream_triggers() {
 // ── V0.4: Flow router end-to-end test ──
 
 use crate::flow_executor::FlowStepExecutor;
-use std::pin::Pin;
 use std::future::Future;
+use std::pin::Pin;
 
 struct RouterTestExec;
 impl FlowStepExecutor for RouterTestExec {
@@ -1647,16 +1647,14 @@ impl FlowStepExecutor for RouterTestExec {
     ) -> Pin<Box<dyn Future<Output = Result<Value, String>> + Send + '_>> {
         match step_id {
             "source" => Box::pin(async { Ok(Value::String("draft_content".to_string())) }),
-            "__router__gate" => {
-                Box::pin(async move {
-                    let s = input.as_str().unwrap_or("");
-                    if s.len() > 5 {
-                        Ok(Value::String("approved".to_string()))
-                    } else {
-                        Ok(Value::String("rejected".to_string()))
-                    }
-                })
-            },
+            "__router__gate" => Box::pin(async move {
+                let s = input.as_str().unwrap_or("");
+                if s.len() > 5 {
+                    Ok(Value::String("approved".to_string()))
+                } else {
+                    Ok(Value::String("rejected".to_string()))
+                }
+            }),
             "publish" => Box::pin(async move {
                 let s = input.as_str().unwrap_or("");
                 Ok(Value::String(format!("published: {}", s)))
@@ -1664,7 +1662,7 @@ impl FlowStepExecutor for RouterTestExec {
             unknown => {
                 let unknown = unknown.to_string();
                 Box::pin(async move { Err(format!("unknown: {}", unknown)) })
-            },
+            }
         }
     }
 }
@@ -1724,7 +1722,10 @@ async fn test_flow_router_end_to_end() {
         "source should be Completed"
     );
     assert!(
-        matches!(result.step_results["__router__gate"].status, StepStatus::Completed),
+        matches!(
+            result.step_results["__router__gate"].status,
+            StepStatus::Completed
+        ),
         "__router__gate should be Completed"
     );
     assert!(

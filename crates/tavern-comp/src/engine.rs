@@ -90,10 +90,10 @@ fn extract_json(raw: &str) -> String {
         }
     }
     // 截取首 { 到尾 }
-    if let Some(start) = raw.find('{') {
-        if let Some(end) = raw.rfind('}') {
-            return raw[start..=end].to_string();
-        }
+    if let Some(start) = raw.find('{')
+        && let Some(end) = raw.rfind('}')
+    {
+        return raw[start..=end].to_string();
     }
     raw.to_string()
 }
@@ -202,48 +202,45 @@ impl WorkflowEngine {
         workflow.validate_static()?;
 
         for step in &workflow.steps {
-            if step.agent_id != FLOW_AGENT_ID {
-                if let Some(ref hero) = self.hero {
-                    if hero.get_agent(&step.agent_id).await.is_none() {
-                        return Err(CompError::AgentNotFound {
-                            id: step.agent_id.clone(),
-                        });
-                    }
-                }
+            if step.agent_id != FLOW_AGENT_ID
+                && let Some(ref hero) = self.hero
+                && hero.get_agent(&step.agent_id).await.is_none()
+            {
+                return Err(CompError::AgentNotFound {
+                    id: step.agent_id.clone(),
+                });
             }
         }
 
         // Hierarchical: 额外检查 Manager agent
-        if let Process::Hierarchical(cfg) = &workflow.process {
-            if let Some(ref hero) = self.hero {
-                if hero.get_agent(&cfg.agent_id).await.is_none() {
-                    return Err(CompError::AgentNotFound {
-                        id: cfg.agent_id.clone(),
-                    });
-                }
-            }
+        if let Process::Hierarchical(cfg) = &workflow.process
+            && let Some(ref hero) = self.hero
+            && hero.get_agent(&cfg.agent_id).await.is_none()
+        {
+            return Err(CompError::AgentNotFound {
+                id: cfg.agent_id.clone(),
+            });
         }
 
         // Planning: 检查 planning_agent
-        if let Some(ref planning) = workflow.planning {
-            if planning.enabled {
-                if self.hero.is_none() {
-                    return Err(CompError::ConfigParse {
-                        path: "<workflow>".into(),
-                        reason: "planning requires hero agent (not available in Flow-only mode)"
-                            .into(),
-                    });
-                }
-                let hero = self.hero.as_ref().unwrap();
-                let agent_id = planning
-                    .planning_agent
-                    .as_deref()
-                    .unwrap_or(&workflow.steps[0].agent_id);
-                if hero.get_agent(agent_id).await.is_none() {
-                    return Err(CompError::PlanningAgentNotRegistered {
-                        id: agent_id.to_string(),
-                    });
-                }
+        if let Some(ref planning) = workflow.planning
+            && planning.enabled
+        {
+            if self.hero.is_none() {
+                return Err(CompError::ConfigParse {
+                    path: "<workflow>".into(),
+                    reason: "planning requires hero agent (not available in Flow-only mode)".into(),
+                });
+            }
+            let hero = self.hero.as_ref().unwrap();
+            let agent_id = planning
+                .planning_agent
+                .as_deref()
+                .unwrap_or(&workflow.steps[0].agent_id);
+            if hero.get_agent(agent_id).await.is_none() {
+                return Err(CompError::PlanningAgentNotRegistered {
+                    id: agent_id.to_string(),
+                });
             }
         }
 
@@ -673,8 +670,8 @@ impl WorkflowEngine {
                             Some(event) = internal_rx.recv() => {
                                 self.apply_and_persist(&instance_id, event.clone(), &mut state).await?;
 
-                                if let WorkflowEvent::StepCompleted { step_id, output, .. } = &event {
-                                    if let Some(step) = workflow.steps.iter().find(|s| &s.id == step_id) {
+                                if let WorkflowEvent::StepCompleted { step_id, output, .. } = &event
+                                    && let Some(step) = workflow.steps.iter().find(|s| &s.id == step_id) {
                                         // V0.4: Router 路由处理
                                         if let Some(ref router) = step.router {
                                             let upstream_output = state.context.get(&router.upstream).cloned().unwrap_or(Value::Null);
@@ -702,7 +699,6 @@ impl WorkflowEngine {
                                             }
                                         }
                                     }
-                                }
 
                                 if let WorkflowEvent::StepFailed { step_id, will_retry: true, attempt, .. } = &event {
                                     let delay = self.get_retry_delay(&workflow, step_id);
@@ -719,8 +715,8 @@ impl WorkflowEngine {
                                     ).await;
                                 }
 
-                                if let WorkflowEvent::TimerFired { timer_id } = &event {
-                                    if timer_id.starts_with("signal_timeout_") {
+                                if let WorkflowEvent::TimerFired { timer_id } = &event
+                                    && timer_id.starts_with("signal_timeout_") {
                                         let step_id = timer_id.strip_prefix("signal_timeout_").unwrap();
                                         // V0.3.2: 检查 signal_timeout_action 配置
                                         let timeout_action = workflow
@@ -751,7 +747,6 @@ impl WorkflowEngine {
                                             });
                                         }
                                     }
-                                }
                             }
                             Some(event) = signal_rx.recv() => {
                                 self.apply_and_persist(&instance_id, event, &mut state).await?;
@@ -790,56 +785,56 @@ impl WorkflowEngine {
         }.await;
 
         // V0.3.5: 触发 Webhook 回调（fire-and-forget）
-        if let Some(ref webhook) = workflow.webhook {
-            if !webhook.url.is_empty() {
-                let error_str: Option<String>;
-                let (status, context, outputs, step_results) = match &result {
-                    Ok(r) => {
-                        error_str = None;
-                        (
-                            "completed",
-                            r.context.clone(),
-                            r.outputs.clone(),
-                            serde_json::to_value(&r.step_results).unwrap_or_default(),
-                        )
-                    }
-                    Err(e) => {
-                        error_str = Some(e.to_string());
-                        let ctx = state.context.clone();
-                        let outputs = self
-                            .build_workflow_outputs(&workflow, &state)
-                            .unwrap_or_default();
-                        let step_results =
-                            serde_json::to_value(&state.step_results).unwrap_or_default();
-                        ("failed", ctx, outputs, step_results)
-                    }
-                };
-                let payload = build_webhook_payload(
-                    &workflow.id,
-                    &instance_id,
-                    status,
-                    &context,
-                    &outputs,
-                    &step_results,
-                    error_str.as_deref(),
-                );
-                let url = webhook.url.clone();
-                let secret = webhook.secret.clone();
-                let timeout_secs = webhook.timeout_secs.unwrap_or(30);
-                let retries = webhook.retries.unwrap_or(0).min(10);
-                let retry_delay = webhook.retry_delay.unwrap_or(5);
-                tokio::spawn(async move {
-                    send_webhook(
-                        &url,
-                        &payload,
-                        secret.as_deref(),
-                        timeout_secs,
-                        retries,
-                        retry_delay,
+        if let Some(ref webhook) = workflow.webhook
+            && !webhook.url.is_empty()
+        {
+            let error_str: Option<String>;
+            let (status, context, outputs, step_results) = match &result {
+                Ok(r) => {
+                    error_str = None;
+                    (
+                        "completed",
+                        r.context.clone(),
+                        r.outputs.clone(),
+                        serde_json::to_value(&r.step_results).unwrap_or_default(),
                     )
-                    .await;
-                });
-            }
+                }
+                Err(e) => {
+                    error_str = Some(e.to_string());
+                    let ctx = state.context.clone();
+                    let outputs = self
+                        .build_workflow_outputs(&workflow, &state)
+                        .unwrap_or_default();
+                    let step_results =
+                        serde_json::to_value(&state.step_results).unwrap_or_default();
+                    ("failed", ctx, outputs, step_results)
+                }
+            };
+            let payload = build_webhook_payload(
+                &workflow.id,
+                &instance_id,
+                status,
+                &context,
+                &outputs,
+                &step_results,
+                error_str.as_deref(),
+            );
+            let url = webhook.url.clone();
+            let secret = webhook.secret.clone();
+            let timeout_secs = webhook.timeout_secs.unwrap_or(30);
+            let retries = webhook.retries.unwrap_or(0).min(10);
+            let retry_delay = webhook.retry_delay.unwrap_or(5);
+            tokio::spawn(async move {
+                send_webhook(
+                    &url,
+                    &payload,
+                    secret.as_deref(),
+                    timeout_secs,
+                    retries,
+                    retry_delay,
+                )
+                .await;
+            });
         }
 
         let _ = completion_tx.send(result.clone());
@@ -898,10 +893,10 @@ impl WorkflowEngine {
 
         for completed in &state.completed_steps {
             for step in &workflow.steps {
-                if step.depends_on.contains(completed) {
-                    if let Some(d) = in_degree.get_mut(&step.id) {
-                        *d = d.saturating_sub(1);
-                    }
+                if step.depends_on.contains(completed)
+                    && let Some(d) = in_degree.get_mut(&step.id)
+                {
+                    *d = d.saturating_sub(1);
                 }
                 // V0.4: OR 依赖——任一上游完成即清零（触发执行）
                 if step.or_depends_on.contains(completed) {
@@ -1285,15 +1280,13 @@ impl WorkflowEngine {
         };
 
         for event in &events {
-            match event {
-                WorkflowEvent::InstanceCreated {
-                    workflow_id: wid,
-                    inputs: inp,
-                } => {
-                    workflow_id = Some(wid.clone());
-                    inputs = Some(inp.clone());
-                }
-                _ => {}
+            if let WorkflowEvent::InstanceCreated {
+                workflow_id: wid,
+                inputs: inp,
+            } = event
+            {
+                workflow_id = Some(wid.clone());
+                inputs = Some(inp.clone());
             }
             let _ = state.apply(event);
         }

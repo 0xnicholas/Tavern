@@ -19,10 +19,10 @@ fn extract_flow_attr(attrs: &[Attribute]) -> Option<FlowMethodAttr> {
         if attr.path().is_ident("listen") {
             return parse_listen_attr(attr);
         }
-        if attr.path().is_ident("router") {
-            if let Ok(lit) = attr.parse_args::<syn::LitStr>() {
-                return Some(FlowMethodAttr::Router(lit.value()));
-            }
+        if attr.path().is_ident("router")
+            && let Ok(lit) = attr.parse_args::<syn::LitStr>()
+        {
+            return Some(FlowMethodAttr::Router(lit.value()));
         }
     }
     None
@@ -162,6 +162,7 @@ pub fn flow_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
         })
         .collect();
 
+    let mut last_output_step_id: Option<String> = None;
     let mut workflow_steps: Vec<proc_macro2::TokenStream> = Vec::new();
     let mut dispatch_arms: Vec<proc_macro2::TokenStream> = Vec::new();
     let mut pass_through: Vec<proc_macro2::TokenStream> = Vec::new();
@@ -182,6 +183,10 @@ pub fn flow_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
                     let is_router = matches!(flow_attr, Some(FlowMethodAttr::Router(_)));
 
                     // ── Build Step for __workflow_definition ──
+                    if !is_router {
+                        last_output_step_id = Some(name_str.clone());
+                    }
+
                     let step_id = if is_router {
                         format!("__router__{}", name_str)
                     } else {
@@ -189,9 +194,7 @@ pub fn flow_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
                     };
 
                     let (depends_on, or_depends_on, router_config) = match &flow_attr {
-                        Some(FlowMethodAttr::Start) => {
-                            (vec![], vec![], None)
-                        }
+                        Some(FlowMethodAttr::Start) => (vec![], vec![], None),
                         Some(FlowMethodAttr::Listen(ListenTarget::Single(name))) => {
                             if method_names.contains(name) {
                                 // Direct method dependency → OR with no prefix
@@ -202,20 +205,40 @@ pub fn flow_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
                             }
                         }
                         Some(FlowMethodAttr::Listen(ListenTarget::Or(names))) => {
-                            // OR always uses __label__ prefix (router labels)
-                            let prefixed: Vec<String> = names.iter()
-                                .map(|n| format!("__label__{}", n))
+                            // OR with prefix detection: method names → no prefix, labels → __label__ prefix
+                            let prefixed: Vec<String> = names
+                                .iter()
+                                .map(|n| {
+                                    if method_names.contains(n) {
+                                        n.clone()
+                                    } else {
+                                        format!("__label__{}", n)
+                                    }
+                                })
                                 .collect();
                             (vec![], prefixed, None)
                         }
                         Some(FlowMethodAttr::Listen(ListenTarget::And(names))) => {
-                            // AND always uses direct method names (no prefix)
-                            (names.clone(), vec![], None)
+                            // AND with prefix detection: method names → no prefix, labels → __label__ prefix
+                            let prefixed: Vec<String> = names
+                                .iter()
+                                .map(|n| {
+                                    if method_names.contains(n) {
+                                        n.clone()
+                                    } else {
+                                        format!("__label__{}", n)
+                                    }
+                                })
+                                .collect();
+                            (prefixed, vec![], None)
                         }
-                        Some(FlowMethodAttr::Router(upstream)) => {
-                            (vec![upstream.clone()], vec![],
-                             Some(quote! { Some(tavern_comp::RouterConfig { upstream: #upstream.to_string() }) }))
-                        }
+                        Some(FlowMethodAttr::Router(upstream)) => (
+                            vec![upstream.clone()],
+                            vec![],
+                            Some(
+                                quote! { Some(tavern_comp::RouterConfig { upstream: #upstream.to_string() }) },
+                            ),
+                        ),
                         None => unreachable!(),
                     };
 
@@ -226,10 +249,12 @@ pub fn flow_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
                         quote! { Some(#step_id.to_string()) }
                     };
 
-                    let depends_on_tokens: Vec<proc_macro2::TokenStream> = depends_on.iter()
+                    let depends_on_tokens: Vec<proc_macro2::TokenStream> = depends_on
+                        .iter()
                         .map(|d| quote! { #d.to_string() })
                         .collect();
-                    let or_depends_on_tokens: Vec<proc_macro2::TokenStream> = or_depends_on.iter()
+                    let or_depends_on_tokens: Vec<proc_macro2::TokenStream> = or_depends_on
+                        .iter()
                         .map(|d| quote! { #d.to_string() })
                         .collect();
 
@@ -252,14 +277,13 @@ pub fn flow_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
                     let mut has_input = false;
 
                     for arg in &method.sig.inputs {
-                        if let FnArg::Typed(pat_ty) = arg {
-                            if let Pat::Ident(pi) = &*pat_ty.pat {
-                                if pi.ident != "self" {
-                                    has_input = true;
-                                    wrapper_inputs.push(FnArg::Typed(pat_ty.clone()));
-                                    wrapper_args.push(quote! { #pi });
-                                }
-                            }
+                        if let FnArg::Typed(pat_ty) = arg
+                            && let Pat::Ident(pi) = &*pat_ty.pat
+                            && pi.ident != "self"
+                        {
+                            has_input = true;
+                            wrapper_inputs.push(FnArg::Typed(pat_ty.clone()));
+                            wrapper_args.push(quote! { #pi });
                         }
                     }
 
@@ -350,6 +374,8 @@ pub fn flow_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
         }
     }
 
+    let last_step_str = last_output_step_id.as_deref().unwrap_or("");
+
     let expanded = quote! {
         impl #struct_name {
             #(#pass_through)*
@@ -379,6 +405,13 @@ pub fn flow_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
                 let engine = tavern_comp::WorkflowEngine::new_with_flow_executor(executor);
                 let result = engine.run(&workflow, inputs).await
                     .map_err(|e| #crate_path::FlowError::Other(e.to_string()))?;
+                // Return terminal step output (last non-router step)
+                let last_step_id: &str = #last_step_str;
+                if let Some(step_result) = result.step_results.get(last_step_id) {
+                    if let Some(ref output) = step_result.output {
+                        return Ok(output.clone());
+                    }
+                }
                 Ok(result.outputs)
             }
         }
@@ -403,16 +436,14 @@ pub fn flow_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
 /// Extract crate path from `#[flow_impl(crate = "...")]`.
 fn extract_crate_path(args: &[syn::Meta]) -> syn::Path {
     for meta in args {
-        if let syn::Meta::NameValue(nv) = meta {
-            if nv.path.is_ident("crate") {
-                if let syn::Expr::Lit(syn::ExprLit {
-                    lit: syn::Lit::Str(s),
-                    ..
-                }) = &nv.value
-                {
-                    return syn::parse_str::<syn::Path>(&s.value()).unwrap();
-                }
-            }
+        if let syn::Meta::NameValue(nv) = meta
+            && nv.path.is_ident("crate")
+            && let syn::Expr::Lit(syn::ExprLit {
+                lit: syn::Lit::Str(s),
+                ..
+            }) = &nv.value
+        {
+            return syn::parse_str::<syn::Path>(&s.value()).unwrap();
         }
     }
     syn::parse_str::<syn::Path>("tavern_flow").unwrap()

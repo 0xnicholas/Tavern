@@ -2,7 +2,6 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::AtomicU64;
 use tavern_comp::{WorkflowEvent, WorkflowRegistry};
-use tavern_flow::FlowHandleRef;
 use tavern_hero::TavernHero;
 use tokio::sync::{RwLock, broadcast, mpsc};
 
@@ -33,10 +32,6 @@ pub struct AppState {
     pub execution_handles: Arc<RwLock<HashMap<String, mpsc::Sender<WorkflowEvent>>>>,
     /// SSE 广播注册表（用于 /executions/:id/events/stream）
     pub event_broadcasts: EventBroadcasts,
-    /// Flow 注册表
-    pub flow_registry: Arc<tavern_flow::FlowRegistry>,
-    /// 活跃 Flow 实例（用于 status/cancel）
-    pub flow_handles: Arc<RwLock<HashMap<String, FlowHandleRef>>>,
     /// V0.3.6: Cron 定时调度器
     pub scheduler: Arc<Scheduler>,
     /// V0.3.2: 租户限流器

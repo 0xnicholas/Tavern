@@ -63,10 +63,10 @@ impl TavernConfig {
         let mut config: TavernConfig = figment.extract()?;
 
         // V0.1.0 兼容回退
-        if config.runtime.url.is_empty() {
-            if let Ok(url) = std::env::var("RUNTIME_URL") {
-                config.runtime.url = url;
-            }
+        if config.runtime.url.is_empty()
+            && let Ok(url) = std::env::var("RUNTIME_URL")
+        {
+            config.runtime.url = url;
         }
 
         Ok(config)
