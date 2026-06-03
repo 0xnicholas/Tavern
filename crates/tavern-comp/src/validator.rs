@@ -8,9 +8,11 @@ pub struct DagMaps {
     pub in_degree: HashMap<String, usize>,
     pub adj: HashMap<String, Vec<String>>,
     pub step_ids: HashSet<String>,
+    /// V0.4: OR step 集合
+    pub or_steps: HashSet<String>,
 }
 
-/// 构建 DAG 的入度表和邻接表。
+/// 构建 DAG 的入度表和邻接表（增强版：处理 depends_on + or_depends_on）。
 pub fn build_dag_maps(workflow: &Workflow) -> DagMaps {
     let step_ids: HashSet<String> = workflow.steps.iter().map(|s| s.id.clone()).collect();
     let mut in_degree: HashMap<String, usize> =
@@ -20,17 +22,41 @@ pub fn build_dag_maps(workflow: &Workflow) -> DagMaps {
         .iter()
         .map(|s| (s.id.clone(), Vec::new()))
         .collect();
+    let mut or_steps: HashSet<String> = HashSet::new();
 
     for step in &workflow.steps {
-        for dep in &step.depends_on {
-            adj.entry(dep.clone()).or_default().push(step.id.clone());
-            *in_degree.get_mut(&step.id).unwrap() += 1;
+        if !step.or_depends_on.is_empty() {
+            let all_labels = step
+                .or_depends_on
+                .iter()
+                .all(|u| u.starts_with("__label__"));
+            if all_labels {
+                // 纯 label 依赖：入度为 0（静态无前置，运行时 Router 触发）
+                in_degree.insert(step.id.clone(), 0);
+            } else {
+                // 混合或纯方法依赖：入度 = 1（任一上游完成即触发）
+                in_degree.insert(step.id.clone(), 1);
+            }
+            or_steps.insert(step.id.clone());
+            for upstream in &step.or_depends_on {
+                // 非 label 边加入邻接表（用于环检测）
+                if !upstream.starts_with("__label__") {
+                    adj.entry(upstream.clone()).or_default().push(step.id.clone());
+                }
+            }
+        } else {
+            // AND: in_degree = depends_on.len()
+            for dep in &step.depends_on {
+                adj.entry(dep.clone()).or_default().push(step.id.clone());
+                *in_degree.get_mut(&step.id).unwrap() += 1;
+            }
         }
     }
     DagMaps {
         in_degree,
         adj,
         step_ids,
+        or_steps,
     }
 }
 
@@ -47,12 +73,41 @@ pub fn validate_dag(workflow: &Workflow) -> Result<Vec<String>, CompError> {
         mut in_degree,
         adj,
         step_ids,
+        or_steps: _,
     } = build_dag_maps(workflow);
 
     // 校验依赖存在性
     for step in &workflow.steps {
+        // V0.4: 互斥检查
+        if !step.depends_on.is_empty() && !step.or_depends_on.is_empty() {
+            return Err(CompError::ConfigParse {
+                path: "<workflow>".to_string(),
+                reason: format!(
+                    "step '{}' has both depends_on and or_depends_on — must be mutually exclusive",
+                    step.id
+                ),
+            });
+        }
+        // V0.4: router upstream 必须在 depends_on 中
+        if let Some(ref router) = step.router {
+            if !step.depends_on.contains(&router.upstream) {
+                return Err(CompError::ConfigParse {
+                    path: "<workflow>".to_string(),
+                    reason: format!(
+                        "step '{}' has router.upstream '{}' which is not in depends_on",
+                        step.id, router.upstream
+                    ),
+                });
+            }
+        }
         for dep in &step.depends_on {
             if !step_ids.contains(dep) {
+                return Err(CompError::StepNotFound { id: dep.clone() });
+            }
+        }
+        // V0.4: or_depends_on 存在性检查（跳过 __label__ 条目）
+        for dep in &step.or_depends_on {
+            if !dep.starts_with("__label__") && !step_ids.contains(dep) {
                 return Err(CompError::StepNotFound { id: dep.clone() });
             }
         }
@@ -202,6 +257,121 @@ mod tests {
         };
         let err = validate_dag(&workflow).unwrap_err();
         assert!(matches!(err, CompError::StepNotFound { id } if id == "x"));
+    }
+
+    // ── V0.4: OR dependency tests ──
+
+    fn make_step_or(id: &str, or_deps: Vec<&str>) -> crate::workflow::Step {
+        crate::workflow::Step {
+            or_depends_on: or_deps.into_iter().map(|s| s.to_string()).collect(),
+            router: None,
+            ..make_step(id, vec![])
+        }
+    }
+
+    fn base_workflow() -> Workflow {
+        Workflow {
+            id: "w1".into(),
+            name: "test".into(),
+            description: None,
+            steps: vec![],
+            inputs: vec![],
+            outputs: vec![],
+            process: Process::Sequential,
+            planning: None,
+            webhook: None,
+            schedule: None,
+            schedule_inputs: serde_json::Value::Null,
+        }
+    }
+
+    #[test]
+    fn test_or_dep_build_dag_maps() {
+        let workflow = Workflow {
+            steps: vec![
+                make_step("a", vec![]),
+                make_step("b", vec![]),
+                make_step_or("c", vec!["a", "b"]),
+            ],
+            ..base_workflow()
+        };
+        let dag = build_dag_maps(&workflow);
+        // OR step: in_degree should be 1 (not 2)
+        assert_eq!(dag.in_degree.get("c").copied(), Some(1));
+        assert!(dag.or_steps.contains("c"));
+    }
+
+    #[test]
+    fn test_or_dep_missing_dependency() {
+        let workflow = Workflow {
+            steps: vec![
+                make_step("a", vec![]),
+                make_step_or("b", vec!["nonexistent"]),
+            ],
+            ..base_workflow()
+        };
+        let err = validate_dag(&workflow).unwrap_err();
+        assert!(
+            matches!(err, CompError::StepNotFound { id } if id == "nonexistent")
+        );
+    }
+
+    #[test]
+    fn test_or_dep_mutual_exclusion_rejected() {
+        let mut step = make_step("a", vec!["x"]);
+        step.or_depends_on = vec!["y".into()];
+        let workflow = Workflow {
+            steps: vec![step],
+            ..base_workflow()
+        };
+        let err = validate_dag(&workflow).unwrap_err();
+        assert!(matches!(err, CompError::ConfigParse { .. }));
+    }
+
+    #[test]
+    fn test_or_dep_cycle_detected() {
+        let workflow = Workflow {
+            steps: vec![
+                make_step_or("a", vec!["b"]),
+                make_step("b", vec!["a"]),
+            ],
+            ..base_workflow()
+        };
+        let err = validate_dag(&workflow).unwrap_err();
+        assert!(matches!(err, CompError::CyclicDependency));
+    }
+
+    #[test]
+    fn test_label_prefixed_or_dep_skipped_in_validation() {
+        let workflow = Workflow {
+            steps: vec![
+                make_step("a", vec![]),
+                make_step_or("b", vec!["__label__approved"]),
+            ],
+            ..base_workflow()
+        };
+        // __label__ entries should be skipped in existence check
+        assert!(validate_dag(&workflow).is_ok());
+    }
+
+    #[test]
+    fn test_router_upstream_not_in_depends_on_rejected() {
+        let step = crate::workflow::Step {
+            id: "r1".into(),
+            agent_id: "a1".into(),
+            task: "route".into(),
+            depends_on: vec!["x".into()],
+            router: Some(crate::workflow::RouterConfig {
+                upstream: "y".into(),
+            }),
+            ..Default::default()
+        };
+        let workflow = Workflow {
+            steps: vec![step],
+            ..base_workflow()
+        };
+        let err = validate_dag(&workflow).unwrap_err();
+        assert!(matches!(err, CompError::ConfigParse { .. }));
     }
 
     // ── Phase 1: Hierarchical 校验测试 ──
