@@ -20,6 +20,7 @@ futures-util = "0.3"
 uuid = { version = "1", features = ["v4"] }
 async-trait = "0.1"
 sqlx = { version = "0.8", features = ["runtime-tokio", "postgres", "migrate", "json"] }
+libsqlite3-sys = { version = "0.30", features = ["bundled"], optional = true }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 hmac = "0.12"
 sha2 = "0.10"
@@ -28,6 +29,7 @@ sha2 = "0.10"
 default = ["sqlite"]
 sqlite = ["sqlx/sqlite"]
 postgres = ["sqlx/postgres"]
+bundled-sqlite = ["sqlx/sqlite", "dep:libsqlite3-sys"]
 
 [dev-dependencies]
 tempfile = "3"

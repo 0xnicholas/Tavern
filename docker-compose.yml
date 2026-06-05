@@ -26,7 +26,7 @@ services:
 
   # === PostgreSQL（可选，仅当 TAVERN_STORE__STORE_TYPE=postgres 时启用） ===
   db:
-    image: postgres:16-alpine
+    image: postgres:17-alpine
     environment:
       POSTGRES_USER: tavern
       POSTGRES_PASSWORD: tavern

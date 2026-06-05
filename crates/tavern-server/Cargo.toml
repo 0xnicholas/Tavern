@@ -35,6 +35,7 @@ notify = "7"
 default = ["sqlite"]
 sqlite = ["tavern-comp/sqlite"]
 postgres = ["tavern-comp/postgres"]
+bundled-sqlite = ["tavern-comp/bundled-sqlite"]
 
 [dev-dependencies]
 wiremock = "0.6"
