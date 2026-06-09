@@ -84,6 +84,8 @@ docker compose --profile postgres up -d    # PostgreSQL 模式
 | `TAVERN_RATE_LIMIT__ENABLED` | 否 | `false` | 启用租户限流 |
 | `TAVERN_RATE_LIMIT__DEFAULT_RPS` | 否 | `10` | 每租户默认每秒请求数 |
 | `TAVERN_CONFIG_PATH` | 否 | `config.toml` | TOML 配置文件路径 |
+| `TAVERN_PUBLIC_URL` | 否* | — | Tavern 对外可达地址（tool calling 必需） |
+| `TAVERN_TOOL_SECRET` | 否* | — | 工具端点鉴权密钥（tool calling 必需） |
 | `RUST_LOG` | 否 | `info` | 日志级别（`debug`、`info`、`warn`、`error`） |
 
 ## 定义智能体
@@ -103,6 +105,16 @@ instructions: |
   你是研究助理，负责全面收集并综合整理信息。
 skills:
   - id: web_search
+    name: web_search
+    description: Search the web for information
+    parameters:
+      type: object
+      properties:
+        query:
+          type: string
+          description: The search query
+      required: [query]
+    timeout_ms: 30000
     config:
       max_results: 5
 constraints:
@@ -113,6 +125,20 @@ memory:
 ```
 
 支持的模型提供商：任何兼容 OpenAI API 的服务（通过 Pandaria 透传）。
+
+### Tool Calling（技能执行）
+
+Tavern 支持真正的 tool calling：配置 `skills` 后，Pandaria 会将 LLM 的 ToolCall 请求转发回调到 Tavern，由 Tavern 执行实际工具逻辑。
+
+启用条件（两者缺一不可）：
+```bash
+export TAVERN_PUBLIC_URL=https://tavern.example.com   # Pandaria 可达的 Tavern 地址
+export TAVERN_TOOL_SECRET=your-shared-secret          # 端点鉴权
+```
+
+流程：`LLM → Pandaria HttpProxyTool → POST /api/tools/:name → Tavern ToolHandler.execute() → 返回结果`
+
+Skill 完整定义参考上例。`name`/`description`/`parameters` 构成 LLM 可见的 function schema，`config` 为 Tavern handler 私有配置（LLM 不可见）。所有新增字段有默认值，旧版 YAML 不写照样作为纯文本注入工作。
 
 ## 定义工作流 —— YAML
 
