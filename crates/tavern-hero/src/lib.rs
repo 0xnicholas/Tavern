@@ -152,7 +152,7 @@ instructions: test
     #[tokio::test]
     async fn test_hero_execute_success() {
         let runtime = Arc::new(MockRuntime::new(
-            |_agent_id, _task, _context, _sp, _model| Ok(json!({"result": "ok"})),
+            |_agent_id, _task, _context, _sp, _model, _tools| Ok(json!({"result": "ok"})),
         ));
         let hero = TavernHero::new(runtime);
 
@@ -179,7 +179,7 @@ instructions: 研究
     #[tokio::test]
     async fn test_hero_execute_agent_not_found() {
         let runtime = Arc::new(MockRuntime::new(
-            |_agent_id, _task, _context, _sp, _model| Ok(json!({"result": "ok"})),
+            |_agent_id, _task, _context, _sp, _model, _tools| Ok(json!({"result": "ok"})),
         ));
         let hero = TavernHero::new(runtime);
 
@@ -190,7 +190,7 @@ instructions: 研究
     #[tokio::test]
     async fn test_hero_load_from_dir() {
         let runtime = Arc::new(MockRuntime::new(
-            |_agent_id, _task, _context, _sp, _model| Ok(json!({})),
+            |_agent_id, _task, _context, _sp, _model, _tools| Ok(json!({})),
         ));
         let hero = TavernHero::new(runtime);
 
@@ -218,7 +218,7 @@ instructions: test
     #[tokio::test]
     async fn test_hero_concurrent_load_and_execute() {
         let runtime = Arc::new(MockRuntime::new(
-            |_agent_id, _task, _context, _sp, _model| Ok(json!({"result": "ok"})),
+            |_agent_id, _task, _context, _sp, _model, _tools| Ok(json!({"result": "ok"})),
         ));
         let hero = Arc::new(TavernHero::new(runtime));
 

@@ -127,6 +127,14 @@ async fn main() {
     let scheduler_clone = scheduler.clone();
     tokio::spawn(async move { scheduler_clone.run().await });
 
+    // V0.4: 创建工具注册表并注册内置 handler
+    let tool_registry = tavern_core::ToolRegistry::new();
+    tool_registry.register(
+        "web_search".to_string(),
+        Arc::new(tavern_server::tools::web_search::WebSearchHandler::new()),
+    );
+    let tool_registry = Arc::new(tool_registry);
+
     let app_state = Arc::new(state::AppState {
         hero: hero.clone(),
         registry: registry.clone(),
@@ -159,6 +167,7 @@ async fn main() {
         ),
         scheduler: scheduler.clone(),
         config: config.clone(),
+        tool_registry: tool_registry.clone(),
     });
 
     let app = router::create_router(app_state.clone());
@@ -559,7 +568,7 @@ mod tests {
 
     async fn create_test_app() -> axum::Router {
         create_test_app_with_workflow(
-            |_agent_id, task, _context, _sp, _model| {
+            |_agent_id, task, _context, _sp, _model, _tools| {
                 if task.starts_with("research") {
                     Ok(json!("research notes"))
                 } else if task.starts_with("write") {
@@ -781,7 +790,7 @@ mod tests {
         workflow: tavern_comp::Workflow,
     ) -> axum::Router
     where
-        F: Fn(&str, &str, Option<Value>, &str, &str) -> Result<Value, tavern_core::RuntimeError>
+        F: Fn(&str, &str, Option<Value>, &str, &str, &[tavern_core::ToolDef]) -> Result<Value, tavern_core::RuntimeError>
             + Send
             + Sync
             + 'static,
@@ -839,6 +848,7 @@ instructions: 研究
                 registry_for_scheduler,
             )),
             config: tavern_config::TavernConfig::default(),
+            tool_registry: Arc::new(tavern_core::ToolRegistry::new()),
         }))
     }
 
@@ -874,7 +884,7 @@ instructions: 研究
             schedule: None,
             schedule_inputs: serde_json::Value::Null,
         };
-        let app = create_test_app_with_workflow(|_, _, _, _, _| Ok(json!("ok")), wf).await;
+        let app = create_test_app_with_workflow(|_, _, _, _, _, _| Ok(json!("ok")), wf).await;
         let response = app
             .oneshot(
                 Request::builder()
@@ -922,7 +932,7 @@ instructions: 研究
             schedule_inputs: serde_json::Value::Null,
         };
         let app = create_test_app_with_workflow(
-            |_, _, _, _, _| {
+            |_, _, _, _, _, _| {
                 Err(tavern_core::RuntimeError::RequestFailed {
                     status: 500,
                     body: "boom".to_string(),
@@ -1239,7 +1249,7 @@ instructions: 研究
             schedule: None,
             schedule_inputs: serde_json::Value::Null,
         };
-        let app = create_test_app_with_workflow(|_, _, _, _, _| Ok(json!("done")), wf).await;
+        let app = create_test_app_with_workflow(|_, _, _, _, _, _| Ok(json!("done")), wf).await;
 
         // Start workflow
         let response = app
@@ -1346,6 +1356,7 @@ instructions: 研究
                 _context: Option<Value>,
                 _system_prompt: &str,
                 _model: &str,
+                _tools: &[tavern_core::ToolDef],
             ) -> Result<Value, tavern_core::RuntimeError> {
                 tokio::time::sleep(Duration::from_secs(10)).await;
                 Ok(json!("done"))
@@ -1404,6 +1415,7 @@ instructions: 研究
                 registry_for_scheduler,
             )),
             config: tavern_config::TavernConfig::default(),
+            tool_registry: Arc::new(tavern_core::ToolRegistry::new()),
         }));
 
         // Start workflow

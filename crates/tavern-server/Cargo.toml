@@ -30,6 +30,8 @@ tower-http = { version = "0.5", features = ["trace"] }
 async-trait = "0.1"
 chrono = { version = "0.4", features = ["serde"] }
 notify = "7"
+reqwest = { version = "0.12", features = ["json"] }
+urlencoding = "2"
 
 [features]
 default = ["sqlite"]

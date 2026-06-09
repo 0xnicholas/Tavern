@@ -54,7 +54,7 @@ mod tests {
 
         let runtime = PandariaRuntime::new(mock_server.uri()).unwrap();
         let result = runtime
-            .execute("agent1", "task1", None, "You are helpful.", "openai/gpt-4o")
+            .execute("agent1", "task1", None, "You are helpful.", "openai/gpt-4o", &[])
             .await;
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), json!({"text": "hello from assistant"}));
@@ -71,7 +71,7 @@ mod tests {
 
         let runtime = PandariaRuntime::new(mock_server.uri()).unwrap();
         let result = runtime
-            .execute("agent1", "task1", None, "prompt", "openai/gpt-4o")
+            .execute("agent1", "task1", None, "prompt", "openai/gpt-4o", &[])
             .await;
         assert!(result.is_err());
     }
@@ -104,18 +104,18 @@ mod tests {
 
         let runtime = PandariaRuntime::new(mock_server.uri()).unwrap();
         let result = runtime
-            .execute("agent1", "task1", None, "prompt", "openai/gpt-4o")
+            .execute("agent1", "task1", None, "prompt", "openai/gpt-4o", &[])
             .await;
         assert!(result.is_err());
     }
 
     #[tokio::test]
     async fn test_mock_runtime_success() {
-        let runtime = MockRuntime::new(|_agent_id, _task, _context, _sp, _model| {
+        let runtime = MockRuntime::new(|_agent_id, _task, _context, _sp, _model, _tools| {
             Ok(json!({"mock_result": 42}))
         });
         let result = runtime
-            .execute("agent1", "task1", None, "prompt", "gpt-4o")
+            .execute("agent1", "task1", None, "prompt", "gpt-4o", &[])
             .await;
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), json!({"mock_result": 42}));
@@ -123,14 +123,14 @@ mod tests {
 
     #[tokio::test]
     async fn test_mock_runtime_error() {
-        let runtime = MockRuntime::new(|_a, _t, _c, _s, _m| {
+        let runtime = MockRuntime::new(|_a, _t, _c, _s, _m, _tools| {
             Err(RuntimeError::RequestFailed {
                 status: 500,
                 body: "mock error".to_string(),
             })
         });
         let result = runtime
-            .execute("agent1", "task1", None, "prompt", "gpt-4o")
+            .execute("agent1", "task1", None, "prompt", "gpt-4o", &[])
             .await;
         assert!(result.is_err());
     }

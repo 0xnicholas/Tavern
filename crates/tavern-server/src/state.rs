@@ -38,4 +38,6 @@ pub struct AppState {
     pub rate_limiter: RateLimiter,
     /// 运行时配置（用于认证中间件等）
     pub config: tavern_config::TavernConfig,
+    /// 工具注册表（ToolHandler 按 name 分发）
+    pub tool_registry: Arc<tavern_core::ToolRegistry>,
 }

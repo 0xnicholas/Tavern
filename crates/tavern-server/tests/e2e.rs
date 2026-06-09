@@ -96,7 +96,7 @@ async fn create_test_app_with_workflow<F>(
     workflow: tavern_comp::Workflow,
 ) -> axum::Router
 where
-    F: Fn(&str, &str, Option<Value>, &str, &str) -> Result<Value, tavern_core::RuntimeError>
+    F: Fn(&str, &str, Option<Value>, &str, &str, &[tavern_core::ToolDef]) -> Result<Value, tavern_core::RuntimeError>
         + Send
         + Sync
         + 'static,
@@ -182,12 +182,13 @@ instructions: 编辑
             std::collections::HashMap::new(),
         ),
         config: tavern_config::TavernConfig::default(),
+            tool_registry: Arc::new(tavern_core::ToolRegistry::new()),
     }))
 }
 
 async fn create_test_app() -> axum::Router {
     create_test_app_with_workflow(
-        |_agent_id, task, _context, _sp, _model| {
+        |_agent_id, task, _context, _sp, _model, _tools| {
             if task.starts_with("research") {
                 Ok(json!("research notes"))
             } else if task.starts_with("write") {
@@ -461,7 +462,7 @@ async fn test_end_to_end_signal_workflow() {
     };
 
     let app = create_test_app_with_workflow(
-        |_agent_id, _task, _context, _sp, _model| Ok(json!("report content")),
+        |_agent_id, _task, _context, _sp, _model, _tools| Ok(json!("report content")),
         signal_wf,
     )
     .await;
@@ -622,7 +623,7 @@ async fn test_end_to_end_workflow_crud() {
 
 async fn create_test_app_with_auth(auth_type: &str, keys: Vec<&str>) -> axum::Router {
     let runtime: Arc<dyn Runtime> = Arc::new(MockRuntime::new(
-        |_agent_id, task, _context, _sp, _model| {
+        |_agent_id, task, _context, _sp, _model, _tools| {
             Ok(match task {
                 t if t.starts_with("research") => json!("research notes"),
                 t if t.starts_with("write") => json!("draft article"),
@@ -714,6 +715,7 @@ instructions: 编辑
             std::collections::HashMap::new(),
         ),
         config,
+        tool_registry: Arc::new(tavern_core::ToolRegistry::new()),
     }))
 }
 

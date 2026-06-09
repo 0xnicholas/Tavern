@@ -11,7 +11,7 @@ use super::*;
 
 async fn make_engine<F>(handler: F) -> WorkflowEngine
 where
-    F: Fn(&str, &str, Option<Value>, &str, &str) -> Result<Value, tavern_core::RuntimeError>
+    F: Fn(&str, &str, Option<Value>, &str, &str, &[tavern_core::ToolDef]) -> Result<Value, tavern_core::RuntimeError>
         + Send
         + Sync
         + 'static,
@@ -83,7 +83,7 @@ fn simple_workflow() -> Workflow {
 #[tokio::test]
 async fn test_run_success() {
     let engine =
-        make_engine(|_agent_id, _task, _context, _system_prompt, _model| Ok(json!("done"))).await;
+        make_engine(|_agent_id, _task, _context, _system_prompt, _model, _tools| Ok(json!("done"))).await;
     let wf = simple_workflow();
     let result = engine.run(&wf, json!({"input": "hello"})).await.unwrap();
 
@@ -99,7 +99,7 @@ async fn test_run_success() {
 #[tokio::test]
 async fn test_run_missing_input() {
     let engine =
-        make_engine(|_agent_id, _task, _context, _system_prompt, _model| Ok(json!("done"))).await;
+        make_engine(|_agent_id, _task, _context, _system_prompt, _model, _tools| Ok(json!("done"))).await;
     let wf = simple_workflow();
     let err = engine.run(&wf, json!({})).await.unwrap_err();
     assert!(matches!(err, CompError::MissingInput { name } if name == "input"));
@@ -108,7 +108,7 @@ async fn test_run_missing_input() {
 #[tokio::test]
 async fn test_run_agent_not_found() {
     let engine =
-        make_engine(|_agent_id, _task, _context, _system_prompt, _model| Ok(json!("done"))).await;
+        make_engine(|_agent_id, _task, _context, _system_prompt, _model, _tools| Ok(json!("done"))).await;
     let mut wf = simple_workflow();
     wf.steps[0].agent_id = "unknown".to_string();
     let err = engine.run(&wf, json!({"input": "x"})).await.unwrap_err();
@@ -117,7 +117,7 @@ async fn test_run_agent_not_found() {
 
 #[tokio::test]
 async fn test_run_step_failure() {
-    let engine = make_engine(|_agent_id, _task, _context, _system_prompt, _model| {
+    let engine = make_engine(|_agent_id, _task, _context, _system_prompt, _model, _tools| {
         Err(tavern_core::RuntimeError::RequestFailed {
             status: 500,
             body: "boom".to_string(),
@@ -145,6 +145,7 @@ async fn test_run_timeout() {
             _context: Option<Value>,
             _system_prompt: &str,
             _model: &str,
+                _tools: &[tavern_core::ToolDef],
         ) -> Result<Value, tavern_core::RuntimeError> {
             tokio::time::sleep(Duration::from_secs(10)).await;
             Ok(json!("done"))
@@ -183,7 +184,7 @@ instructions: test
 #[tokio::test]
 async fn test_run_outputs_validation() {
     let engine =
-        make_engine(|_agent_id, _task, _context, _system_prompt, _model| Ok(json!("done"))).await;
+        make_engine(|_agent_id, _task, _context, _system_prompt, _model, _tools| Ok(json!("done"))).await;
     let mut wf = simple_workflow();
     wf.outputs.push(OutputDef {
         name: "bad".to_string(),
@@ -195,7 +196,7 @@ async fn test_run_outputs_validation() {
 
 #[tokio::test]
 async fn test_run_pipeline() {
-    let engine = make_engine(|_agent_id, task, _context, _system_prompt, _model| {
+    let engine = make_engine(|_agent_id, task, _context, _system_prompt, _model, _tools| {
         if task.starts_with("research") {
             Ok(json!("research notes"))
         } else if task.starts_with("write") {
@@ -295,7 +296,7 @@ async fn test_run_retry_success() {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     let call_count = AtomicUsize::new(0);
-    let engine = make_engine(move |_agent_id, _task, _context, _system_prompt, _model| {
+    let engine = make_engine(move |_agent_id, _task, _context, _system_prompt, _model, _tools| {
         let count = call_count.fetch_add(1, Ordering::SeqCst);
         if count < 2 {
             Err(tavern_core::RuntimeError::RequestFailed {
@@ -325,7 +326,7 @@ async fn test_run_retry_exhausted() {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     let call_count = AtomicUsize::new(0);
-    let engine = make_engine(move |_agent_id, _task, _context, _system_prompt, _model| {
+    let engine = make_engine(move |_agent_id, _task, _context, _system_prompt, _model, _tools| {
         call_count.fetch_add(1, Ordering::SeqCst);
         Err(tavern_core::RuntimeError::RequestFailed {
             status: 500,
@@ -349,7 +350,7 @@ async fn test_run_retry_with_delay() {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     let call_count = AtomicUsize::new(0);
-    let engine = make_engine(move |_agent_id, _task, _context, _system_prompt, _model| {
+    let engine = make_engine(move |_agent_id, _task, _context, _system_prompt, _model, _tools| {
         let count = call_count.fetch_add(1, Ordering::SeqCst);
         if count == 0 {
             Err(tavern_core::RuntimeError::RequestFailed {
@@ -397,6 +398,7 @@ async fn test_run_parallel_steps() {
             _context: Option<Value>,
             _system_prompt: &str,
             _model: &str,
+                _tools: &[tavern_core::ToolDef],
         ) -> Result<Value, tavern_core::RuntimeError> {
             self.call_count.fetch_add(1, Ordering::SeqCst);
             tokio::time::sleep(Duration::from_millis(self.delay_ms)).await;
@@ -515,6 +517,7 @@ async fn test_run_max_concurrency() {
             _context: Option<Value>,
             _system_prompt: &str,
             _model: &str,
+                _tools: &[tavern_core::ToolDef],
         ) -> Result<Value, tavern_core::RuntimeError> {
             self.call_count.fetch_add(1, Ordering::SeqCst);
             tokio::time::sleep(Duration::from_millis(self.delay_ms)).await;
@@ -653,6 +656,7 @@ async fn test_run_parallel_failure_cancels_others() {
             _context: Option<Value>,
             _system_prompt: &str,
             _model: &str,
+                _tools: &[tavern_core::ToolDef],
         ) -> Result<Value, tavern_core::RuntimeError> {
             if task == "fail" {
                 return Err(tavern_core::RuntimeError::RequestFailed {
@@ -761,7 +765,7 @@ instructions: test
 
 async fn make_hierarchical_engine<F>(handler: F) -> WorkflowEngine
 where
-    F: Fn(&str, &str, Option<Value>, &str, &str) -> Result<Value, tavern_core::RuntimeError>
+    F: Fn(&str, &str, Option<Value>, &str, &str, &[tavern_core::ToolDef]) -> Result<Value, tavern_core::RuntimeError>
         + Send
         + Sync
         + 'static,
@@ -862,7 +866,7 @@ async fn test_hierarchical_delegate_then_done() {
     use std::sync::atomic::{AtomicUsize, Ordering};
     let call_count = AtomicUsize::new(0);
 
-    let engine = make_hierarchical_engine(move |agent_id, _task, _context, _sp, _model| {
+    let engine = make_hierarchical_engine(move |agent_id, _task, _context, _sp, _model, _tools| {
         if agent_id == "manager" {
             let count = call_count.fetch_add(1, Ordering::SeqCst);
             if count == 0 {
@@ -899,7 +903,7 @@ async fn test_hierarchical_all_steps() {
     use std::sync::atomic::{AtomicUsize, Ordering};
     let call_count = AtomicUsize::new(0);
 
-    let engine = make_hierarchical_engine(move |agent_id, _task, _context, _sp, _model| {
+    let engine = make_hierarchical_engine(move |agent_id, _task, _context, _sp, _model, _tools| {
         if agent_id == "manager" {
             let count = call_count.fetch_add(1, Ordering::SeqCst);
             match count {
@@ -929,7 +933,7 @@ async fn test_hierarchical_all_steps() {
 
 #[tokio::test]
 async fn test_hierarchical_manager_loop_exceeded() {
-    let engine = make_hierarchical_engine(move |agent_id, _task, _context, _sp, _model| {
+    let engine = make_hierarchical_engine(move |agent_id, _task, _context, _sp, _model, _tools| {
         if agent_id == "manager" {
             // Always delegate to s1, creating infinite loop
             Ok(json!({"action": "delegate", "task_id": "s1", "agent_id": "test_agent"}))
@@ -949,7 +953,7 @@ async fn test_hierarchical_manager_loop_exceeded() {
 
 #[tokio::test]
 async fn test_hierarchical_manager_unknown_task_id() {
-    let engine = make_hierarchical_engine(move |agent_id, _task, _context, _sp, _model| {
+    let engine = make_hierarchical_engine(move |agent_id, _task, _context, _sp, _model, _tools| {
         if agent_id == "manager" {
             Ok(json!({"action": "delegate", "task_id": "nonexistent", "agent_id": "test_agent"}))
         } else {
@@ -969,7 +973,7 @@ async fn test_hierarchical_manager_non_json_response_with_retry() {
     use std::sync::atomic::{AtomicUsize, Ordering};
     let call_count = AtomicUsize::new(0);
 
-    let engine = make_hierarchical_engine(move |agent_id, _task, _context, _sp, _model| {
+    let engine = make_hierarchical_engine(move |agent_id, _task, _context, _sp, _model, _tools| {
         if agent_id == "manager" {
             let count = call_count.fetch_add(1, Ordering::SeqCst);
             if count == 0 {
@@ -1000,7 +1004,7 @@ async fn test_hierarchical_manager_non_json_response_with_retry() {
 async fn test_hierarchical_manager_agent_not_registered() {
     // Use make_engine (not make_hierarchical_engine) — only "test_agent" is registered.
     // The hierarchical workflow references "manager" which doesn't exist.
-    let engine = make_engine(|_agent_id, _task, _context, _sp, _model| Ok(json!("ok"))).await;
+    let engine = make_engine(|_agent_id, _task, _context, _sp, _model, _tools| Ok(json!("ok"))).await;
     let wf = hierarchical_workflow();
     let err = engine.run(&wf, json!({})).await.unwrap_err();
     assert!(matches!(err, CompError::AgentNotFound { id } if id == "manager"));
@@ -1011,7 +1015,7 @@ async fn test_hierarchical_event_stream_matches_sequential() {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     let call_count = AtomicUsize::new(0);
-    let engine = make_hierarchical_engine(move |agent_id, _task, _context, _sp, _model| {
+    let engine = make_hierarchical_engine(move |agent_id, _task, _context, _sp, _model, _tools| {
         if agent_id == "manager" {
             let count = call_count.fetch_add(1, Ordering::SeqCst);
             match count {
@@ -1073,7 +1077,7 @@ async fn test_planning_injects_context_into_task() {
     use std::sync::atomic::{AtomicUsize, Ordering};
     let call_count = AtomicUsize::new(0);
 
-    let engine = make_engine(move |_agent_id, _task, _context, _sp, _model| {
+    let engine = make_engine(move |_agent_id, _task, _context, _sp, _model, _tools| {
         let count = call_count.fetch_add(1, Ordering::SeqCst);
         if count == 0 {
             // Planning phase: return a Plan
@@ -1111,7 +1115,7 @@ async fn test_planning_disabled_skips_planner() {
     let call_count = Arc::new(AtomicUsize::new(0));
     let cc = call_count.clone();
 
-    let engine = make_engine(move |_agent_id, _task, _context, _sp, _model| {
+    let engine = make_engine(move |_agent_id, _task, _context, _sp, _model, _tools| {
         cc.fetch_add(1, Ordering::SeqCst);
         Ok(json!("done"))
     })
@@ -1130,7 +1134,7 @@ async fn test_planning_disabled_skips_planner() {
 
 #[tokio::test]
 async fn test_planning_error_fails_workflow() {
-    let engine = make_engine(|_agent_id, _task, _context, _sp, _model| {
+    let engine = make_engine(|_agent_id, _task, _context, _sp, _model, _tools| {
         Err(tavern_core::RuntimeError::RequestFailed {
             status: 500,
             body: "planner failed".to_string(),
@@ -1153,7 +1157,7 @@ async fn test_planning_agent_omitted_falls_back_to_first_step_agent() {
     use std::sync::atomic::{AtomicUsize, Ordering};
     let call_count = AtomicUsize::new(0);
 
-    let engine = make_engine(move |agent_id, _task, _context, _sp, _model| {
+    let engine = make_engine(move |agent_id, _task, _context, _sp, _model, _tools| {
         let count = call_count.fetch_add(1, Ordering::SeqCst);
         if count == 0 {
             // Planning phase: called with "test_agent" (fallback from steps[0].agent_id)
@@ -1206,7 +1210,7 @@ async fn test_planning_plus_hierarchical_integration() {
     use std::sync::atomic::{AtomicUsize, Ordering};
     let call_count = AtomicUsize::new(0);
 
-    let engine = make_hierarchical_engine(move |agent_id, _task, _context, _sp, _model| {
+    let engine = make_hierarchical_engine(move |agent_id, _task, _context, _sp, _model, _tools| {
         let count = call_count.fetch_add(1, Ordering::SeqCst);
         match (agent_id, count) {
             // Call 0: Planning phase (planner = "manager" per config)
@@ -1250,7 +1254,7 @@ async fn test_planning_plus_hierarchical_integration() {
 #[tokio::test]
 async fn test_start_and_await_completion_equivalent_to_run() {
     let engine =
-        make_engine(|_agent_id, _task, _context, _system_prompt, _model| Ok(json!("done"))).await;
+        make_engine(|_agent_id, _task, _context, _system_prompt, _model, _tools| Ok(json!("done"))).await;
     let wf = simple_workflow();
 
     let run_result = engine.run(&wf, json!({"input": "hello"})).await.unwrap();
@@ -1274,7 +1278,7 @@ async fn test_signal_wait_and_resume() {
 
     let call_count = Arc::new(AtomicUsize::new(0));
     let cc = call_count.clone();
-    let engine = make_engine(move |_agent_id, _task, _context, _system_prompt, _model| {
+    let engine = make_engine(move |_agent_id, _task, _context, _system_prompt, _model, _tools| {
         cc.fetch_add(1, Ordering::SeqCst);
         Ok(json!("step_done"))
     })
@@ -1318,7 +1322,7 @@ async fn test_signal_timeout_fails_workflow() {
     use std::time::Duration;
 
     let engine =
-        make_engine(|_agent_id, _task, _context, _system_prompt, _model| Ok(json!("done"))).await;
+        make_engine(|_agent_id, _task, _context, _system_prompt, _model, _tools| Ok(json!("done"))).await;
 
     let mut wf = simple_workflow();
     wf.steps[0].wait_for_signal = Some("approve".to_string());
@@ -1356,6 +1360,7 @@ async fn test_cancel_execution() {
             _context: Option<Value>,
             _system_prompt: &str,
             _model: &str,
+                _tools: &[tavern_core::ToolDef],
         ) -> Result<Value, tavern_core::RuntimeError> {
             tokio::time::sleep(Duration::from_secs(10)).await;
             Ok(json!("done"))
@@ -1442,7 +1447,7 @@ fn signal_workflow() -> Workflow {
 /// 验证 recover() 可从 Event Log 重建状态并从中断点继续执行。
 #[tokio::test]
 async fn test_recover_after_signal_wait_resumes() {
-    let engine = make_engine(|_, _, _, _, _| Ok(json!("done"))).await;
+    let engine = make_engine(|_, _, _, _, _, _| Ok(json!("done"))).await;
     // Use MemoryEventStore so events persist even if handle is dropped
     let store = Arc::new(MemoryEventStore::new());
     let engine = engine.with_store(store.clone());
@@ -1498,7 +1503,7 @@ async fn test_recover_after_signal_wait_resumes() {
 /// 验证 recover() 对已完成的实例返回错误。
 #[tokio::test]
 async fn test_recover_completed_instance_returns_error() {
-    let engine = make_engine(|_, _, _, _, _| Ok(json!("done"))).await;
+    let engine = make_engine(|_, _, _, _, _, _| Ok(json!("done"))).await;
     let store = Arc::new(MemoryEventStore::new());
     let engine = engine.with_store(store.clone());
 
@@ -1522,7 +1527,7 @@ async fn test_recover_completed_instance_returns_error() {
 /// 验证 recover() 对不存在的实例返回错误。
 #[tokio::test]
 async fn test_recover_nonexistent_instance_returns_error() {
-    let engine = make_engine(|_, _, _, _, _| Ok(json!("done"))).await;
+    let engine = make_engine(|_, _, _, _, _, _| Ok(json!("done"))).await;
     let wf = simple_workflow();
 
     let result = engine
@@ -1534,7 +1539,7 @@ async fn test_recover_nonexistent_instance_returns_error() {
 /// 验证 store.list_by_status 可用于找到待恢复的 Running 实例。
 #[tokio::test]
 async fn test_list_by_status_finds_running_instances() {
-    let engine = make_engine(|_, _, _, _, _| Ok(json!("done"))).await;
+    let engine = make_engine(|_, _, _, _, _, _| Ok(json!("done"))).await;
     let store = Arc::new(MemoryEventStore::new());
     let engine = engine.with_store(store.clone());
 
@@ -1574,7 +1579,7 @@ async fn test_list_by_status_finds_running_instances() {
 /// OR dependency — first upstream completion triggers downstream.
 #[tokio::test]
 async fn test_or_dependency_first_upstream_triggers() {
-    let engine = make_engine(|_agent_id, task, _context, _system_prompt, _model| {
+    let engine = make_engine(|_agent_id, task, _context, _system_prompt, _model, _tools| {
         Ok(serde_json::Value::String(format!("result_{}", task)))
     })
     .await;

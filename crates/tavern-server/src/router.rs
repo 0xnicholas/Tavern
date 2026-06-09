@@ -97,6 +97,10 @@ pub fn create_router(state: Arc<AppState>) -> Router {
     // Auth refresh (public, only works in bearer mode)
     public_routes = public_routes.route("/auth/refresh", post(handlers::refresh_token_handler));
 
+    // V0.4: 工具回调端点（Pandaria → Tavern tool execution）
+    public_routes =
+        public_routes.route("/api/tools/:name", post(handlers::tool_call_handler));
+
     // Flow endpoints
     let mut flow_routes = Router::new()
         .route("/flows", get(handlers::list_flows_handler))

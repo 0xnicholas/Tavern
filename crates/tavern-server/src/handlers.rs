@@ -1431,3 +1431,77 @@ pub async fn cancel_flow_handler() -> impl IntoResponse {
         Json(serde_json::json!({"error": "Flow cancel API deprecated."})),
     )
 }
+
+// ── V0.4: Tool Call Handler ──
+
+use axum::http::HeaderMap;
+use tavern_core::{ContentPart, ToolError, ToolResult};
+
+#[derive(Deserialize)]
+pub struct ToolCallRequest {
+    tool_call_id: String,
+    params: Value,
+    session_id: String,
+    tenant_id: String,
+}
+
+pub async fn tool_call_handler(
+    State(state): State<Arc<AppState>>,
+    Path(name): Path<String>,
+    headers: HeaderMap,
+    Json(body): Json<ToolCallRequest>,
+) -> Result<impl IntoResponse, (StatusCode, ApiError)> {
+    // Auth check (only when TAVERN_TOOL_SECRET is set)
+    if let Ok(secret) = std::env::var("TAVERN_TOOL_SECRET") {
+        let auth = headers
+            .get("authorization")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("");
+        if auth != format!("Bearer {}", secret) {
+            return Err((
+                StatusCode::UNAUTHORIZED,
+                ApiError::new(StatusCode::UNAUTHORIZED, "Unauthorized", "invalid tool secret"),
+            ));
+        }
+    }
+
+    let handler = state
+        .tool_registry
+        .get(&name)
+        .ok_or_else(|| {
+            (
+                StatusCode::NOT_FOUND,
+                ApiError::new(
+                    StatusCode::NOT_FOUND,
+                    "ToolNotFound",
+                    format!("tool '{}' not registered", name),
+                ),
+            )
+        })?;
+
+    match handler
+        .execute(body.params, &body.tenant_id, &body.session_id, &body.tool_call_id)
+        .await
+    {
+        Ok(result) => Ok((StatusCode::OK, Json(result))),
+        Err(ToolError::InvalidParams(msg)) => Err((
+            StatusCode::BAD_REQUEST,
+            ApiError::new(StatusCode::BAD_REQUEST, "InvalidParams", msg),
+        )),
+        Err(ToolError::ExecutionFailed(msg)) => {
+            let error_result = ToolResult {
+                content: vec![ContentPart {
+                    content_type: "text".into(),
+                    text: Some(msg),
+                }],
+                is_error: true,
+                details: None,
+            };
+            Ok((StatusCode::OK, Json(error_result)))
+        }
+        Err(ToolError::NotFound(msg)) => Err((
+            StatusCode::NOT_FOUND,
+            ApiError::new(StatusCode::NOT_FOUND, "ToolNotFound", msg),
+        )),
+    }
+}
