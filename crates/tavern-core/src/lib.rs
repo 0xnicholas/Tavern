@@ -223,4 +223,52 @@ config:
         assert_eq!(skill.timeout_ms, 15000);
         assert_eq!(skill.config, serde_json::json!({"max_results": 10}));
     }
+
+    // ── Tool Runtime: ToolDef 序列化测试 ──
+
+    #[test]
+    fn test_tool_def_default_values() {
+        let tool = ToolDef {
+            id: "web_search".into(),
+            name: String::new(),
+            description: String::new(),
+            parameters: serde_json::Value::Null,
+            endpoint: String::new(),
+            timeout_ms: 0,
+            config: None,
+        };
+        let json = serde_json::to_string(&tool).unwrap();
+        let parsed: ToolDef = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.id, "web_search");
+        assert!(json.contains("\"name\""));
+    }
+
+    #[test]
+    fn test_tool_def_full_serialization_roundtrip() {
+        let tool = ToolDef {
+            id: "web_search".into(),
+            name: "search_web".into(),
+            description: "Search the web".into(),
+            parameters: json!({"type": "object", "properties": {"query": {"type": "string"}}}),
+            endpoint: "https://tavern.local/api/tools/search_web".into(),
+            timeout_ms: 15000,
+            config: Some(json!({"max_results": 5})),
+        };
+        let json = serde_json::to_string(&tool).unwrap();
+        let parsed: ToolDef = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.id, "web_search");
+        assert_eq!(parsed.name, "search_web");
+        assert_eq!(parsed.description, "Search the web");
+        assert_eq!(parsed.endpoint, "https://tavern.local/api/tools/search_web");
+        assert_eq!(parsed.timeout_ms, 15000);
+        assert_eq!(parsed.config, Some(json!({"max_results": 5})));
+    }
+
+    #[test]
+    fn test_tool_def_deserialize_default_timeout() {
+        let json = r#"{"id":"test","name":"","description":"","parameters":{},"endpoint":""}"#;
+        let tool: ToolDef = serde_json::from_str(json).unwrap();
+        assert_eq!(tool.timeout_ms, 30000);
+        assert_eq!(tool.config, None);
+    }
 }
