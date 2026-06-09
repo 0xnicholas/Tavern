@@ -60,10 +60,30 @@ pub struct SkillConfig {
     /// 技能唯一标识
     pub id: String,
 
+    /// LLM function name（默认 = id）
+    #[serde(default)]
+    pub name: Option<String>,
+
+    /// 工具描述
+    #[serde(default)]
+    pub description: Option<String>,
+
+    /// JSON Schema，描述工具参数（默认 {}）
+    #[serde(default = "default_empty_object")]
+    pub parameters: serde_json::Value,
+
+    /// 工具回调超时（毫秒），默认 30000
+    #[serde(default = "default_timeout")]
+    pub timeout_ms: u64,
+
     /// 技能特定配置，格式由技能本身定义
     /// YAML 中可省略，默认 {}
     #[serde(default = "default_empty_object")]
     pub config: serde_json::Value,
+}
+
+fn default_timeout() -> u64 {
+    30000
 }
 
 fn default_empty_object() -> serde_json::Value {

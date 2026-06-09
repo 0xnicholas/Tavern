@@ -5,7 +5,7 @@ pub use config::{
     AgentConfig, AgentSummary, ManagerConfig, MemoryConfig, ModelConfig, Plan, PlanStep,
     PlanningConfig, Process, SkillConfig, is_valid_id,
 };
-pub use runtime::{Runtime, RuntimeError};
+pub use runtime::{Runtime, RuntimeError, ToolDef};
 
 #[cfg(test)]
 mod tests {
@@ -177,5 +177,50 @@ planning_agent: "planner"
         assert_eq!(plan.steps[0].task_id, "research");
         assert_eq!(plan.steps[0].agent_id, "researcher");
         assert_eq!(plan.steps[0].dependencies.len(), 0);
+    }
+
+    // ── Tool Runtime: SkillConfig 扩展测试 ──
+
+    #[test]
+    fn test_skill_config_backward_compatible() {
+        // 旧格式（无新字段）应正常反序列化，新字段取默认值
+        let yaml = r#"
+id: web_search
+config:
+  max_results: 5
+"#;
+        let skill: SkillConfig = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(skill.id, "web_search");
+        assert_eq!(skill.name, None);
+        assert_eq!(skill.description, None);
+        assert_eq!(skill.parameters, serde_json::json!({}));
+        assert_eq!(skill.timeout_ms, 30000);
+        assert_eq!(skill.config, serde_json::json!({"max_results": 5}));
+    }
+
+    #[test]
+    fn test_skill_config_full_new_format() {
+        let yaml = r#"
+id: web_search
+name: search_web
+description: Search the web for information
+parameters:
+  type: object
+  properties:
+    query:
+      type: string
+      description: The search query
+  required: [query]
+timeout_ms: 15000
+config:
+  max_results: 10
+"#;
+        let skill: SkillConfig = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(skill.id, "web_search");
+        assert_eq!(skill.name, Some("search_web".to_string()));
+        assert_eq!(skill.description, Some("Search the web for information".to_string()));
+        assert_eq!(skill.parameters["type"], "object");
+        assert_eq!(skill.timeout_ms, 15000);
+        assert_eq!(skill.config, serde_json::json!({"max_results": 10}));
     }
 }
