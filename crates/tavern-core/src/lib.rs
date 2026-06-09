@@ -1,11 +1,13 @@
 pub mod config;
 pub mod runtime;
+pub mod tool;
 
 pub use config::{
     AgentConfig, AgentSummary, ManagerConfig, MemoryConfig, ModelConfig, Plan, PlanStep,
     PlanningConfig, Process, SkillConfig, is_valid_id,
 };
 pub use runtime::{Runtime, RuntimeError, ToolDef};
+pub use tool::{ContentPart, ToolError, ToolHandler, ToolRegistry, ToolResult};
 
 #[cfg(test)]
 mod tests {
