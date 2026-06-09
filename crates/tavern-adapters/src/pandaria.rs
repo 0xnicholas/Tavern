@@ -73,11 +73,15 @@ impl PandariaRuntime {
         &self,
         system_prompt: &str,
         model: &str,
+        tools: &[serde_json::Value],
     ) -> Result<String, RuntimeError> {
-        let payload = serde_json::json!({
+        let mut payload = serde_json::json!({
             "system_prompt": system_prompt,
             "model": model,
         });
+        if !tools.is_empty() {
+            payload["tools"] = serde_json::Value::Array(tools.to_vec());
+        }
         let url = format!("{}/api/v1/sessions", self.base_url);
         let req = self
             .client
@@ -204,10 +208,12 @@ impl Runtime for PandariaRuntime {
         _context: Option<serde_json::Value>,
         system_prompt: &str,
         model: &str,
+        tools: &[tavern_core::ToolDef],
     ) -> Result<serde_json::Value, RuntimeError> {
         let _ = agent_id;
 
-        let session_id = self.create_session(system_prompt, model).await?;
+        let tool_values = tool_def_to_pandaria_json(tools);
+        let session_id = self.create_session(system_prompt, model, &tool_values).await?;
         let response_text = match self.send_message(&session_id, task).await {
             Ok(text) => text,
             Err(e) => {
@@ -230,6 +236,26 @@ impl Runtime for PandariaRuntime {
             Ok(serde_json::json!({"text": response_text}))
         }
     }
+}
+
+/// 将 ToolDef 列表序列化为 Pandaria ToolConfig JSON 数组。
+fn tool_def_to_pandaria_json(tools: &[tavern_core::ToolDef]) -> Vec<serde_json::Value> {
+    let secret = std::env::var("TAVERN_TOOL_SECRET").ok();
+    tools.iter().map(|t| {
+        let mut obj = serde_json::json!({
+            "name": t.name,
+            "description": t.description,
+            "parameters": t.parameters,
+            "endpoint": t.endpoint,
+            "timeout_ms": t.timeout_ms,
+        });
+        if let Some(ref s) = secret {
+            obj["headers"] = serde_json::json!({"Authorization": format!("Bearer {}", s)});
+        } else {
+            obj["headers"] = serde_json::Value::Null;
+        }
+        obj
+    }).collect()
 }
 
 /// Generate a Pandaria-compatible HMAC-SHA256 Bearer token.
