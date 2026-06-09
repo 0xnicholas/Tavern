@@ -242,11 +242,17 @@ impl Runtime for PandariaRuntime {
 fn tool_def_to_pandaria_json(tools: &[tavern_core::ToolDef]) -> Vec<serde_json::Value> {
     let secret = std::env::var("TAVERN_TOOL_SECRET").ok();
     tools.iter().map(|t| {
+        let endpoint = if t.endpoint.is_empty() {
+            let public_url = std::env::var("TAVERN_PUBLIC_URL").unwrap_or_default();
+            format!("{}/api/tools/{}", public_url.trim_end_matches('/'), t.id)
+        } else {
+            t.endpoint.clone()
+        };
         let mut obj = serde_json::json!({
             "name": t.name,
             "description": t.description,
             "parameters": t.parameters,
-            "endpoint": t.endpoint,
+            "endpoint": endpoint,
             "timeout_ms": t.timeout_ms,
         });
         if let Some(ref s) = secret {

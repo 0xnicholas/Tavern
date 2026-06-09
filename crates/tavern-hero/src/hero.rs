@@ -249,7 +249,7 @@ fn skills_to_tool_defs(skills: &[tavern_core::SkillConfig]) -> Vec<tavern_core::
                 name: name.clone(),
                 description: s.description.clone().unwrap_or_default(),
                 parameters: s.parameters.clone(),
-                endpoint: format!("{}/api/tools/{}", public_url, name),
+                endpoint: format!("{}/api/tools/{}", public_url, s.id),
                 timeout_ms: s.timeout_ms,
                 config: if s.config.is_null() { None } else { Some(s.config.clone()) },
             }
@@ -268,8 +268,8 @@ mod tests {
     fn test_skills_to_tool_defs_without_env_returns_empty() {
         let _lock = ENV_LOCK.lock().unwrap();
         unsafe {
-            unsafe { std::env::remove_var("TAVERN_PUBLIC_URL") };
-            unsafe { std::env::remove_var("TAVERN_TOOL_SECRET") };
+            std::env::remove_var("TAVERN_PUBLIC_URL");
+            std::env::remove_var("TAVERN_TOOL_SECRET");
         }
 
         let skill: tavern_core::SkillConfig = serde_yaml::from_str(
@@ -284,8 +284,8 @@ mod tests {
     fn test_skills_to_tool_defs_constructs_correct_tool() {
         let _lock = ENV_LOCK.lock().unwrap();
         unsafe {
-            unsafe { std::env::set_var("TAVERN_PUBLIC_URL", "http://localhost:3000") };
-            unsafe { std::env::set_var("TAVERN_TOOL_SECRET", "test-secret") };
+            std::env::set_var("TAVERN_PUBLIC_URL", "http://localhost:3000");
+            std::env::set_var("TAVERN_TOOL_SECRET", "test-secret");
         }
 
         let skill: tavern_core::SkillConfig = serde_yaml::from_str(
@@ -304,7 +304,7 @@ mod tests {
         );
         assert_eq!(
             tools[0].endpoint,
-            "http://localhost:3000/api/tools/search_web"
+            "http://localhost:3000/api/tools/web_search"
         );
         assert_eq!(tools[0].timeout_ms, 10000);
         assert_eq!(
@@ -313,8 +313,8 @@ mod tests {
         );
 
         unsafe {
-            unsafe { std::env::remove_var("TAVERN_PUBLIC_URL") };
-            unsafe { std::env::remove_var("TAVERN_TOOL_SECRET") };
+            std::env::remove_var("TAVERN_PUBLIC_URL");
+            std::env::remove_var("TAVERN_TOOL_SECRET");
         }
     }
 
@@ -322,8 +322,8 @@ mod tests {
     fn test_skills_to_tool_defs_name_falls_back_to_id() {
         let _lock = ENV_LOCK.lock().unwrap();
         unsafe {
-            unsafe { std::env::set_var("TAVERN_PUBLIC_URL", "http://localhost:3000") };
-            unsafe { std::env::set_var("TAVERN_TOOL_SECRET", "test-secret") };
+            std::env::set_var("TAVERN_PUBLIC_URL", "http://localhost:3000");
+            std::env::set_var("TAVERN_TOOL_SECRET", "test-secret");
         }
 
         // name 未设置时，应 fallback 到 id
@@ -341,8 +341,8 @@ mod tests {
         );
 
         unsafe {
-            unsafe { std::env::remove_var("TAVERN_PUBLIC_URL") };
-            unsafe { std::env::remove_var("TAVERN_TOOL_SECRET") };
+            std::env::remove_var("TAVERN_PUBLIC_URL");
+            std::env::remove_var("TAVERN_TOOL_SECRET");
         }
     }
 }
