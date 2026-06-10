@@ -4,7 +4,7 @@ pub mod tool;
 
 pub use config::{
     AgentConfig, AgentSummary, ManagerConfig, MemoryConfig, ModelConfig, Plan, PlanStep,
-    PlanningConfig, Process, SkillConfig, is_valid_id,
+    PlanningConfig, Process, SkillConfig, ToolRunner, is_valid_id,
 };
 pub use runtime::{Runtime, RuntimeError, ToolDef};
 pub use tool::{ContentPart, ToolError, ToolHandler, ToolRegistry, ToolResult};
@@ -272,5 +272,46 @@ config:
         let tool: ToolDef = serde_json::from_str(json).unwrap();
         assert_eq!(tool.timeout_ms, 30000);
         assert_eq!(tool.config, None);
+    }
+
+    // ── ToolRunner 测试 ──
+
+    #[test]
+    fn test_skill_config_default_runner_is_rust() {
+        let yaml = "id: ws\nconfig: {}";
+        let skill: SkillConfig = serde_yaml::from_str(yaml).unwrap();
+        assert!(matches!(skill.runner, ToolRunner::Rust));
+        assert_eq!(skill.command, None);
+        assert_eq!(skill.url, None);
+    }
+
+    #[test]
+    fn test_skill_config_subprocess_runner() {
+        let yaml = r#"
+id: code_exec
+name: run_code
+runner: subprocess
+command: python3 tools/code_exec.py
+cwd: /tmp/sandbox
+env:
+  PATH: /usr/bin
+"#;
+        let skill: SkillConfig = serde_yaml::from_str(yaml).unwrap();
+        assert!(matches!(skill.runner, ToolRunner::Subprocess));
+        assert_eq!(skill.command.as_deref(), Some("python3 tools/code_exec.py"));
+        assert_eq!(skill.cwd.as_deref(), Some("/tmp/sandbox"));
+        assert!(skill.env.is_some());
+    }
+
+    #[test]
+    fn test_skill_config_sidecar_runner() {
+        let yaml = r#"
+id: data_analysis
+runner: sidecar
+url: http://localhost:8001/tools/analysis
+"#;
+        let skill: SkillConfig = serde_yaml::from_str(yaml).unwrap();
+        assert!(matches!(skill.runner, ToolRunner::Sidecar));
+        assert_eq!(skill.url.as_deref(), Some("http://localhost:8001/tools/analysis"));
     }
 }

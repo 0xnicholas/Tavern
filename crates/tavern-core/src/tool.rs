@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 /// 工具执行错误。
@@ -18,7 +18,7 @@ pub enum ToolError {
 }
 
 /// 工具执行结果，序列化为 Pandaria 回调响应。
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolResult {
     pub content: Vec<ContentPart>,
     pub is_error: bool,
@@ -27,7 +27,7 @@ pub struct ToolResult {
 }
 
 /// 返回给 LLM 的内容片段。
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ContentPart {
     #[serde(rename = "type")]
     pub content_type: String,

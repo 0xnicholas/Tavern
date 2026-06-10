@@ -1437,12 +1437,12 @@ pub async fn cancel_flow_handler() -> impl IntoResponse {
 use axum::http::HeaderMap;
 use tavern_core::{ContentPart, ToolError, ToolResult};
 
-#[derive(Deserialize)]
-pub struct ToolCallRequest {
-    tool_call_id: String,
-    params: Value,
-    session_id: String,
-    tenant_id: String,
+#[derive(serde::Deserialize, serde::Serialize)]
+pub(crate) struct ToolCallRequest {
+    pub(crate) tool_call_id: String,
+    pub(crate) params: Value,
+    pub(crate) session_id: String,
+    pub(crate) tenant_id: String,
 }
 
 pub async fn tool_call_handler(

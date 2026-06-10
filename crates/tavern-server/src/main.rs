@@ -128,11 +128,13 @@ async fn main() {
     tokio::spawn(async move { scheduler_clone.run().await });
 
     // V0.4: 创建工具注册表并注册内置 handler
-    let tool_registry = tavern_core::ToolRegistry::new();
+    let mut tool_registry = tavern_core::ToolRegistry::new();
     tool_registry.register(
         "web_search".to_string(),
         Arc::new(tavern_server::tools::web_search::WebSearchHandler::new()),
     );
+    // 从 agent YAML 自动注册 subprocess/sidecar handler
+    register_external_tools(&hero, &mut tool_registry).await;
     let tool_registry = Arc::new(tool_registry);
 
     let app_state = Arc::new(state::AppState {
@@ -462,6 +464,46 @@ async fn recover_pending_instances(
                         "failed to recover instance",
                     );
                 }
+            }
+        }
+    }
+}
+
+/// 从已注册 Agent 的 YAML 配置中自动注册 subprocess/sidecar handler。
+async fn register_external_tools(hero: &tavern_hero::TavernHero, registry: &mut tavern_core::ToolRegistry) {
+    use tavern_core::ToolRunner;
+
+    for agent in hero.list_agents().await {
+        for skill in &agent.skills {
+            match skill.runner {
+                ToolRunner::Subprocess => {
+                    if let Some(ref command) = skill.command {
+                        if registry.get(&skill.id).is_some() {
+                            tracing::warn!(
+                                tool_id = %skill.id,
+                                agent_id = %agent.id,
+                                "tool re-registered; previous handler replaced"
+                            );
+                        }
+                        let handler = Arc::new(tavern_server::tools::subprocess::SubprocessHandler::new(
+                            command,
+                            skill.timeout_ms,
+                            skill.cwd.as_deref(),
+                            skill.env.as_ref(),
+                        ));
+                        registry.register(skill.id.clone(), handler);
+                    }
+                }
+                ToolRunner::Sidecar => {
+                    if let Some(ref url) = skill.url {
+                        let handler = Arc::new(tavern_server::tools::sidecar::SidecarHandler::new(
+                            url,
+                            skill.timeout_ms,
+                        ));
+                        registry.register(skill.id.clone(), handler);
+                    }
+                }
+                ToolRunner::Rust => { /* 已在前面手动注册 */ }
             }
         }
     }

@@ -76,6 +76,26 @@ pub struct SkillConfig {
     #[serde(default = "default_timeout")]
     pub timeout_ms: u64,
 
+    /// 工具执行方式，默认 Rust（向后兼容）
+    #[serde(default)]
+    pub runner: ToolRunner,
+
+    /// subprocess 模式：启动命令（按空白字符拆分为 prog + args）
+    #[serde(default)]
+    pub command: Option<String>,
+
+    /// subprocess 模式：子进程工作目录。None = 继承 server CWD
+    #[serde(default)]
+    pub cwd: Option<String>,
+
+    /// subprocess 模式：环境变量。None = 继承 server 环境，Some({}) = 清除
+    #[serde(default)]
+    pub env: Option<std::collections::HashMap<String, String>>,
+
+    /// sidecar 模式：边车 HTTP URL
+    #[serde(default)]
+    pub url: Option<String>,
+
     /// 技能特定配置，格式由技能本身定义
     /// YAML 中可省略，默认 {}
     #[serde(default = "default_empty_object")]
@@ -88,6 +108,19 @@ fn default_timeout() -> u64 {
 
 fn default_empty_object() -> serde_json::Value {
     serde_json::json!({})
+}
+
+/// 工具执行方式。
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ToolRunner {
+    /// Rust 原生 ToolHandler（main.rs 手动注册）
+    #[default]
+    Rust,
+    /// 子进程模式（stdin/stdout JSON 协议）
+    Subprocess,
+    /// HTTP 边车模式
+    Sidecar,
 }
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
